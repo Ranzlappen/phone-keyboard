@@ -3,4 +3,10 @@
     <string name="app_name">GlyphBoard</string>
     <string name="ime_name">GlyphBoard</string>
     <string name="ime_subtype_label">GlyphBoard</string>
+    <string name="quick_switch_label">GlyphBoard quick switch</string>
+    <string name="quick_switch_description">Adds a keyboard shortcut to the accessibility
+        button: one tap switches to GlyphBoard from anywhere; tapping again while GlyphBoard
+        is active opens the keyboard picker so you can hop back to your other keyboard.
+        This service reads nothing — it declares no accessibility events, no capabilities,
+        and cannot retrieve window content.</string>
 </resources>

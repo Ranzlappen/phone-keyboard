@@ -2,12 +2,13 @@ package io.github.ranzlappen.glyphboard.ui.keyboard
 
 import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -24,27 +25,38 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
-import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import kotlin.math.abs
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 private val KEY_ROW_HEIGHT = 52.dp
-private const val LONG_PRESS_MS = 350L
+private const val HOLD_DELAY_MS = 350L
 private const val REPEAT_FIRST_DELAY_MS = 450L
 private const val REPEAT_INTERVAL_MS = 50L
+private val SPACE_SWIPE_THRESHOLD = 56.dp
+private val ZALGO_STEP = 14.dp
 
 /**
  * Renders one keyboard layout. Pure view: every press is reported through
  * [onAction]; shift/mode state is owned by the caller.
+ *
+ * With a [popup] state, keys that declare hold variants / similarity /
+ * zalgo open the slide-to-select popup on hold (draw it with
+ * [KeyPopupOverlay] in a Box sharing this panel's bounds). With
+ * [onCycleLayout], horizontal swipes on the space bar switch layouts.
  */
 @Composable
 fun KeyboardPanel(
@@ -54,6 +66,10 @@ fun KeyboardPanel(
     onAction: (KeyAction) -> Unit,
     modifier: Modifier = Modifier,
     enterLabel: String? = null,
+    similarity: Map<String, List<String>> = emptyMap(),
+    popup: KeyPopupState? = null,
+    spaceLabel: String? = null,
+    onCycleLayout: ((Int) -> Unit)? = null,
 ) {
     Column(modifier.fillMaxWidth().padding(horizontal = 3.dp, vertical = 4.dp)) {
         for (row in layout) {
@@ -62,7 +78,18 @@ fun KeyboardPanel(
                 val side = (KeyboardLayouts.ROW_WIDTH - rowWidth) / 2f
                 if (side > 0f) Spacer(Modifier.weight(side))
                 for (key in row) {
-                    KeyButton(key, shift, haptics, enterLabel, onAction, Modifier.weight(key.width))
+                    KeyButton(
+                        key = key,
+                        shift = shift,
+                        haptics = haptics,
+                        enterLabel = enterLabel,
+                        similarity = similarity,
+                        popup = popup,
+                        spaceLabel = spaceLabel,
+                        onCycleLayout = onCycleLayout,
+                        onAction = onAction,
+                        modifier = Modifier.weight(key.width),
+                    )
                 }
                 if (side > 0f) Spacer(Modifier.weight(side))
             }
@@ -76,14 +103,23 @@ private fun KeyButton(
     shift: ShiftState,
     haptics: Boolean,
     enterLabel: String?,
+    similarity: Map<String, List<String>>,
+    popup: KeyPopupState?,
+    spaceLabel: String?,
+    onCycleLayout: ((Int) -> Unit)?,
     onAction: (KeyAction) -> Unit,
     modifier: Modifier,
 ) {
     val view = LocalView.current
+    val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     var pressed by remember { mutableStateOf(false) }
+    var keyBounds by remember { mutableStateOf(Rect.Zero) }
 
     val shiftActive = key.isLetter && shift != ShiftState.Off
+    val baseOutput = (key.action as? KeyAction.Text)?.text
+    val shiftedBase = if (shiftActive && baseOutput != null) baseOutput.uppercase() else baseOutput
+
     val label = when {
         key.action == KeyAction.Shift -> when (shift) {
             ShiftState.Off -> "⇧"
@@ -94,14 +130,38 @@ private fun KeyButton(
         shiftActive -> key.label.uppercase()
         else -> key.label
     }
-    // The pointerInput block below is keyed on (key, haptics) only, so it is
-    // NOT restarted when shift flips; read the current values through
-    // rememberUpdatedState or a shift change would commit stale text.
-    val effectiveAction by rememberUpdatedState(
+
+    // Hold-popup candidates: explicit variants first, then similarity-store
+    // lookalikes, deduplicated, shift-transformed for letter keys.
+    val candidates = remember(key, shiftActive, similarity) {
+        if (baseOutput == null) emptyList() else buildList {
+            val seen = LinkedHashSet<String>()
+            key.holdVariants.forEach { seen += if (shiftActive) it.uppercase() else it }
+            if (key.includeSimilar) {
+                similarity[baseOutput.lowercase()]?.forEach {
+                    seen += if (shiftActive) it.uppercase() else it
+                }
+            }
+            addAll(seen)
+        }
+    }
+    val hasPopup = popup != null && baseOutput != null &&
+        (candidates.isNotEmpty() || key.zalgoSlider)
+
+    // The pointerInput block is keyed on the key only; every value it reads
+    // must go through rememberUpdatedState or it would act on stale state
+    // (e.g. commit lowercase after shift flipped).
+    val currentAction by rememberUpdatedState(
         if (shiftActive && key.action is KeyAction.Text) KeyAction.Text(key.action.text.uppercase())
         else key.action
     )
     val currentOnAction by rememberUpdatedState(onAction)
+    val currentCandidates by rememberUpdatedState(candidates)
+    val currentHasPopup by rememberUpdatedState(hasPopup)
+    val currentBase by rememberUpdatedState(shiftedBase)
+    val currentHaptics by rememberUpdatedState(haptics)
+    val currentBounds by rememberUpdatedState(keyBounds)
+    val currentCycle by rememberUpdatedState(onCycleLayout)
 
     val colors = MaterialTheme.colorScheme
     val shiftEngaged = key.action == KeyAction.Shift && shift != ShiftState.Off
@@ -118,53 +178,117 @@ private fun KeyButton(
         else -> colors.onSurface
     }
 
+    val isSpace = key.action == KeyAction.Space
+    val swipeThresholdPx = with(density) { SPACE_SWIPE_THRESHOLD.toPx() }
+    val zalgoStepPx = with(density) { ZALGO_STEP.toPx() }
+
     Box(
         modifier
             .fillMaxHeight()
             .padding(2.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(background)
-            .pointerInput(key, haptics) {
+            .onGloballyPositioned { keyBounds = it.boundsInRoot() }
+            .pointerInput(key) {
                 awaitEachGesture {
-                    awaitFirstDown().also { it.consume() }
+                    val down = awaitFirstDown().also { it.consume() }
                     pressed = true
-                    if (haptics) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+                    if (currentHaptics) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+
                     var repeatJob: Job? = null
-                    var longPressJob: Job? = null
-                    var longPressFired = false
-                    if (key.repeatable) {
-                        repeatJob = scope.launch {
-                            currentOnAction(effectiveAction)
+                    var holdJob: Job? = null
+                    var holdActionFired = false
+                    var popupOpened = false
+                    var swipeAcc = 0f
+                    var cycled = false
+
+                    when {
+                        key.repeatable -> repeatJob = scope.launch {
+                            currentOnAction(currentAction)
                             delay(REPEAT_FIRST_DELAY_MS)
                             while (isActive) {
-                                currentOnAction(effectiveAction)
+                                currentOnAction(currentAction)
                                 delay(REPEAT_INTERVAL_MS)
                             }
                         }
-                    } else if (key.longPress != null) {
-                        longPressJob = scope.launch {
-                            delay(LONG_PRESS_MS)
-                            longPressFired = true
+                        currentHasPopup -> holdJob = scope.launch {
+                            delay(HOLD_DELAY_MS)
+                            popup?.open(
+                                candidates = currentCandidates,
+                                zalgoEnabled = key.zalgoSlider,
+                                baseText = currentBase.orEmpty(),
+                                anchor = currentBounds,
+                                zalgoStepPx = zalgoStepPx,
+                            )
+                            popupOpened = true
+                            if (currentHaptics) {
+                                view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                            }
+                        }
+                        key.longPress != null -> holdJob = scope.launch {
+                            delay(HOLD_DELAY_MS)
+                            holdActionFired = true
                             currentOnAction(key.longPress)
                         }
                     }
-                    val up = waitForUpOrCancellation()
+
+                    var lifted = false
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                        if (change.changedToUp()) {
+                            change.consume()
+                            lifted = true
+                            break
+                        }
+                        if (change.positionChanged()) {
+                            if (popupOpened) {
+                                popup?.drag(currentBounds.topLeft + change.position)
+                            } else if (isSpace && currentCycle != null) {
+                                swipeAcc += change.position.x - change.previousPosition.x
+                                if (abs(swipeAcc) > swipeThresholdPx) {
+                                    currentCycle?.invoke(if (swipeAcc > 0) 1 else -1)
+                                    if (currentHaptics) {
+                                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                    }
+                                    cycled = true
+                                    swipeAcc = 0f
+                                }
+                            }
+                            change.consume()
+                        }
+                    }
+
                     repeatJob?.cancel()
-                    longPressJob?.cancel()
+                    holdJob?.cancel()
                     pressed = false
-                    if (!key.repeatable && up != null && !longPressFired) {
-                        currentOnAction(effectiveAction)
+
+                    if (popupOpened) {
+                        val committed = popup?.commit()
+                        if (lifted && committed != null) {
+                            currentOnAction(KeyAction.Text(committed))
+                        }
+                    } else if (lifted && !holdActionFired && !cycled && !key.repeatable) {
+                        currentOnAction(currentAction)
                     }
                 }
             },
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = label,
-            fontSize = if (label.length > 2) 14.sp else 20.sp,
-            fontWeight = FontWeight.Medium,
-            color = foreground,
-        )
+        if (isSpace && spaceLabel != null) {
+            Text(
+                text = spaceLabel,
+                fontSize = 12.sp,
+                color = colors.onSurfaceVariant,
+            )
+        } else {
+            Text(
+                text = label,
+                fontSize = if (label.length > 2) 14.sp else 20.sp,
+                fontWeight = FontWeight.Medium,
+                color = foreground,
+            )
+        }
         key.hint?.let {
             Text(
                 text = it,

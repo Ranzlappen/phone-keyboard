@@ -9,6 +9,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.ComposeView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
@@ -22,13 +23,19 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import io.github.ranzlappen.glyphboard.GlyphBoardApp
+import io.github.ranzlappen.glyphboard.data.layouts.DefaultLayouts
+import io.github.ranzlappen.glyphboard.data.layouts.LayoutStore
 import io.github.ranzlappen.glyphboard.data.prefs.SettingsRepository
+import io.github.ranzlappen.glyphboard.data.similarity.SimilarityStore
 import io.github.ranzlappen.glyphboard.data.unicode.UnicodeCatalogLoader
 import io.github.ranzlappen.glyphboard.ui.keyboard.GlyphBoardIme
 import io.github.ranzlappen.glyphboard.ui.keyboard.KeyAction
 import io.github.ranzlappen.glyphboard.ui.keyboard.KeyboardMode
+import io.github.ranzlappen.glyphboard.ui.keyboard.LayoutConverter
 import io.github.ranzlappen.glyphboard.ui.keyboard.ShiftState
 import io.github.ranzlappen.glyphboard.ui.theme.GlyphBoardTheme
+import io.github.ranzlappen.glyphboard.ui.unicode.BrowserCallbacks
+import io.github.ranzlappen.glyphboard.ui.unicode.BrowserData
 import io.github.ranzlappen.glyphboard.ui.unicode.CatalogUiState
 import io.github.ranzlappen.glyphboard.util.CodePoints
 import kotlinx.coroutines.CoroutineScope
@@ -64,6 +71,8 @@ class GlyphBoardService :
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private lateinit var settings: SettingsRepository
+    private lateinit var layouts: LayoutStore
+    private lateinit var similarity: SimilarityStore
     private val uiState = ImeUiState()
     private val catalogState = MutableStateFlow<CatalogUiState>(CatalogUiState.Loading)
 
@@ -71,7 +80,10 @@ class GlyphBoardService :
         super.onCreate()
         savedStateRegistryController.performRestore(null)
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
-        settings = (application as GlyphBoardApp).settings
+        val app = application as GlyphBoardApp
+        settings = app.settings
+        layouts = app.layouts
+        similarity = app.similarity
         // Build the catalog eagerly (and rebuild when the glyph filter setting
         // changes) so the browser is usually ready before it is first opened.
         serviceScope.launch {
@@ -93,14 +105,40 @@ class GlyphBoardService :
                 GlyphBoardTheme {
                     val catalog by catalogState.collectAsState()
                     val recents by settings.recentCharacters.collectAsState(initial = emptyList())
+                    val pinnedChars by settings.pinnedCharacters.collectAsState(initial = emptyList())
+                    val pinnedBlocks by settings.pinnedBlocks.collectAsState(initial = emptyList())
                     val haptics by settings.hapticsEnabled.collectAsState(initial = true)
+                    val layoutConfig by layouts.config.collectAsState(initial = DefaultLayouts.config())
+                    val similarityMap by similarity.map.collectAsState(initial = emptyMap())
+
+                    val activeLayout = layoutConfig.activeOrFirst() ?: DefaultLayouts.qwerty()
+                    val layoutRows = remember(activeLayout) {
+                        LayoutConverter.toKeyRows(activeLayout)
+                    }
+
                     GlyphBoardIme(
                         state = uiState,
                         catalogState = catalog,
-                        recents = recents,
+                        browserData = BrowserData(
+                            recents = recents,
+                            pinnedChars = pinnedChars,
+                            pinnedBlocks = pinnedBlocks,
+                        ),
+                        browserCallbacks = BrowserCallbacks(
+                            onInsert = ::insertCodePoint,
+                            onTogglePinChar = { cp ->
+                                serviceScope.launch { settings.togglePinnedCharacter(cp) }
+                            },
+                            onTogglePinBlock = { name ->
+                                serviceScope.launch { settings.togglePinnedBlock(name) }
+                            },
+                        ),
                         haptics = haptics,
+                        layoutRows = layoutRows,
+                        spaceLabel = if (layoutConfig.layouts.size > 1) activeLayout.name else null,
+                        similarity = similarityMap,
                         performAction = ::performAction,
-                        onInsertCodePoint = ::insertCodePoint,
+                        onCycleLayout = ::cycleLayout,
                     )
                 }
             }
@@ -141,6 +179,12 @@ class GlyphBoardService :
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
         store.clear()
         serviceScope.cancel()
+    }
+
+    private fun cycleLayout(delta: Int) {
+        serviceScope.launch {
+            layouts.cycleActive(delta)?.let { uiState.layoutToast = it.name }
+        }
     }
 
     private fun insertCodePoint(cp: Int) {

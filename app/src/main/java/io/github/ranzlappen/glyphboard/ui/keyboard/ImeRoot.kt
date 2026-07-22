@@ -2,19 +2,33 @@ package io.github.ranzlappen.glyphboard.ui.keyboard
 
 import android.os.SystemClock
 import android.view.inputmethod.EditorInfo
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import io.github.ranzlappen.glyphboard.ime.ImeUiState
+import io.github.ranzlappen.glyphboard.ui.unicode.BrowserCallbacks
+import io.github.ranzlappen.glyphboard.ui.unicode.BrowserData
 import io.github.ranzlappen.glyphboard.ui.unicode.CatalogUiState
 import io.github.ranzlappen.glyphboard.ui.unicode.UnicodeBrowserPanel
+import kotlinx.coroutines.delay
 
 private const val SHIFT_DOUBLE_TAP_MS = 350L
+private const val LAYOUT_TOAST_MS = 900L
 
 /**
  * Top-level IME content: switches between the typing layers and the Unicode
@@ -25,12 +39,17 @@ private const val SHIFT_DOUBLE_TAP_MS = 350L
 fun GlyphBoardIme(
     state: ImeUiState,
     catalogState: CatalogUiState,
-    recents: List<Int>,
+    browserData: BrowserData,
+    browserCallbacks: BrowserCallbacks,
     haptics: Boolean,
+    layoutRows: List<List<Key>>,
+    spaceLabel: String?,
+    similarity: Map<String, List<String>>,
     performAction: (KeyAction) -> Unit,
-    onInsertCodePoint: (Int) -> Unit,
+    onCycleLayout: (Int) -> Unit,
 ) {
     val lastShiftTap = remember { longArrayOf(0L) }
+    val popup = remember { KeyPopupState() }
 
     fun dispatch(action: KeyAction) {
         when (action) {
@@ -57,29 +76,55 @@ fun GlyphBoardIme(
         }
     }
 
+    state.layoutToast?.let { toast ->
+        LaunchedEffect(toast) {
+            delay(LAYOUT_TOAST_MS)
+            state.layoutToast = null
+        }
+    }
+
     Surface(color = MaterialTheme.colorScheme.surfaceContainerHigh) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
             when (state.mode) {
                 KeyboardMode.Unicode -> UnicodeBrowserPanel(
                     catalogState = catalogState,
-                    recents = recents,
+                    data = browserData,
+                    callbacks = browserCallbacks,
                     haptics = haptics,
-                    onInsert = onInsertCodePoint,
                     onClose = { state.mode = KeyboardMode.Alpha },
                 )
                 else -> {
                     val layout = when (state.mode) {
                         KeyboardMode.Symbols -> KeyboardLayouts.symbols
                         KeyboardMode.SymbolsAlt -> KeyboardLayouts.symbolsAlt
-                        else -> KeyboardLayouts.alpha
+                        else -> layoutRows
                     }
-                    KeyboardPanel(
-                        layout = layout,
-                        shift = state.shift,
-                        haptics = haptics,
-                        onAction = ::dispatch,
-                        enterLabel = enterLabelFor(state.editorInfo),
-                    )
+                    Box {
+                        KeyboardPanel(
+                            layout = layout,
+                            shift = state.shift,
+                            haptics = haptics,
+                            onAction = ::dispatch,
+                            enterLabel = enterLabelFor(state.editorInfo),
+                            similarity = similarity,
+                            popup = popup,
+                            spaceLabel = spaceLabel,
+                            onCycleLayout = onCycleLayout,
+                        )
+                        KeyPopupOverlay(popup)
+                        state.layoutToast?.let { toast ->
+                            Text(
+                                text = toast,
+                                fontSize = 14.sp,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                modifier = Modifier
+                                    .align(Alignment.Center)
+                                    .clip(RoundedCornerShape(16.dp))
+                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.9f))
+                                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                            )
+                        }
+                    }
                 }
             }
         }

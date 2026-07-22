@@ -32,6 +32,22 @@
                 android:name="android.view.im"
                 android:resource="@xml/method" />
         </service>
+
+        <!-- Optional quick-switch accessibility service: adds a keyboard
+             toggle to the system accessibility button. Requests no data
+             access whatsoever (see accessibility_switch.xml). -->
+        <service
+            android:name=".ime.KeyboardSwitchService"
+            android:exported="true"
+            android:label="@string/quick_switch_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/accessibility_switch" />
+        </service>
     </application>
 
 </manifest>

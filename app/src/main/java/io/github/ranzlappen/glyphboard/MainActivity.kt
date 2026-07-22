@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
@@ -46,35 +47,113 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.withStateAtLeast
+import io.github.ranzlappen.glyphboard.data.layouts.DefaultLayouts
+import io.github.ranzlappen.glyphboard.ui.app.LayoutEditorScreen
+import io.github.ranzlappen.glyphboard.ui.app.LayoutsListScreen
+import io.github.ranzlappen.glyphboard.ui.app.SimilarityScreen
 import io.github.ranzlappen.glyphboard.ui.theme.GlyphBoardTheme
 import kotlinx.coroutines.launch
 
 /**
- * Companion screen: guides the user through enabling and selecting the
- * keyboard, offers a test field, and hosts the (deliberately small) settings.
+ * Companion app: setup flow, test field, settings, and the editors for
+ * custom layouts and the similarity database.
  */
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        /** Set by [io.github.ranzlappen.glyphboard.ime.KeyboardSwitchService] on pre-R devices. */
+        const val EXTRA_SHOW_PICKER = "io.github.ranzlappen.glyphboard.SHOW_PICKER"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
             GlyphBoardTheme {
                 Scaffold { padding ->
-                    SetupScreen(Modifier.padding(padding))
+                    AppRoot(Modifier.padding(padding))
                 }
             }
+        }
+        maybeShowPicker(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        maybeShowPicker(intent)
+    }
+
+    private fun maybeShowPicker(intent: Intent?) {
+        if (intent?.getBooleanExtra(EXTRA_SHOW_PICKER, false) != true) return
+        intent.removeExtra(EXTRA_SHOW_PICKER)
+        lifecycleScope.launch {
+            // The picker is ignored for unfocused apps; wait until foreground.
+            lifecycle.withStateAtLeast(Lifecycle.State.RESUMED) {}
+            getSystemService(InputMethodManager::class.java)?.showInputMethodPicker()
         }
     }
 }
 
+private sealed interface Screen {
+    data object Home : Screen
+    data object Layouts : Screen
+    data class LayoutEdit(val id: String) : Screen
+    data object Similarity : Screen
+}
+
 @Composable
-private fun SetupScreen(modifier: Modifier = Modifier) {
+private fun AppRoot(modifier: Modifier = Modifier) {
     val context = LocalContext.current
     val app = context.applicationContext as GlyphBoardApp
     val scope = rememberCoroutineScope()
 
-    // Re-check enabled/selected state every time the user returns from
-    // the system settings or the keyboard picker.
+    var stack by remember { mutableStateOf<List<Screen>>(listOf(Screen.Home)) }
+    BackHandler(enabled = stack.size > 1) { stack = stack.dropLast(1) }
+
+    val layoutConfig by app.layouts.config.collectAsState(initial = DefaultLayouts.config())
+    val similarityMap by app.similarity.map.collectAsState(initial = emptyMap())
+
+    when (val screen = stack.last()) {
+        Screen.Home -> HomeScreen(
+            modifier = modifier,
+            onOpenLayouts = { stack = stack + Screen.Layouts },
+            onOpenSimilarity = { stack = stack + Screen.Similarity },
+        )
+        Screen.Layouts -> LayoutsListScreen(
+            config = layoutConfig,
+            onSave = { scope.launch { app.layouts.save(it) } },
+            onOpenEditor = { id -> stack = stack + Screen.LayoutEdit(id) },
+            modifier = modifier,
+        )
+        is Screen.LayoutEdit -> LayoutEditorScreen(
+            config = layoutConfig,
+            layoutId = screen.id,
+            onSave = { scope.launch { app.layouts.save(it) } },
+            onBack = { stack = stack.dropLast(1) },
+            modifier = modifier,
+        )
+        Screen.Similarity -> SimilarityScreen(
+            map = similarityMap,
+            onSetEntry = { base, variants -> scope.launch { app.similarity.setEntry(base, variants) } },
+            onReset = { scope.launch { app.similarity.resetToDefaults() } },
+            modifier = modifier,
+        )
+    }
+}
+
+@Composable
+private fun HomeScreen(
+    modifier: Modifier = Modifier,
+    onOpenLayouts: () -> Unit,
+    onOpenSimilarity: () -> Unit,
+) {
+    val context = LocalContext.current
+    val app = context.applicationContext as GlyphBoardApp
+    val scope = rememberCoroutineScope()
+
+    // Re-check system state every time the user returns from settings.
     var refresh by remember { mutableIntStateOf(0) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -91,6 +170,12 @@ private fun SetupScreen(modifier: Modifier = Modifier) {
     val selected = remember(refresh) {
         Settings.Secure.getString(context.contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
             ?.startsWith(context.packageName + "/") == true
+    }
+    val quickSwitchEnabled = remember(refresh) {
+        Settings.Secure.getString(
+            context.contentResolver,
+            "enabled_accessibility_services",
+        )?.contains(context.packageName) == true
     }
 
     val haptics by app.settings.hapticsEnabled.collectAsState(initial = true)
@@ -127,6 +212,44 @@ private fun SetupScreen(modifier: Modifier = Modifier) {
                     buttonText = "Choose keyboard",
                 ) {
                     imm?.showInputMethodPicker()
+                }
+            }
+        }
+
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Customize", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Any number of layouts, cycled by swiping the space bar. Every key's " +
+                        "hold popup is editable, including lookalike characters and the " +
+                        "zalgo slider.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = onOpenLayouts) { Text("Layouts") }
+                    OutlinedButton(onClick = onOpenSimilarity) { Text("Similarity database") }
+                }
+            }
+        }
+
+        Card {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Quick switch button", fontWeight = FontWeight.SemiBold)
+                Text(
+                    "Optional: enable the GlyphBoard quick-switch accessibility service " +
+                        "to get a floating button that swaps keyboards from anywhere — one " +
+                        "tap to GlyphBoard, tap again for the keyboard picker. The service " +
+                        "cannot read the screen or your input.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                SetupStep(
+                    done = quickSwitchEnabled,
+                    label = if (quickSwitchEnabled) "Quick switch is on" else "Quick switch is off",
+                    buttonText = "Open accessibility settings",
+                ) {
+                    context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                 }
             }
         }
