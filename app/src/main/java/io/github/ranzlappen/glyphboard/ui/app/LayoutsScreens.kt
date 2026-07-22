@@ -28,8 +28,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -146,7 +146,13 @@ fun LayoutEditorScreen(
         onBack()
         return
     }
-    var editingKey by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    // Saveable ints (-1 = closed) so the open key dialog survives rotation.
+    var editingRow by rememberSaveable { mutableIntStateOf(-1) }
+    var editingCol by rememberSaveable { mutableIntStateOf(-1) }
+    fun closeDialog() {
+        editingRow = -1
+        editingCol = -1
+    }
 
     fun update(updated: CustomLayout) {
         onSave(config.copy(layouts = config.layouts.map { if (it.id == layoutId) updated else it }))
@@ -189,7 +195,8 @@ fun LayoutEditorScreen(
                         TextButton(onClick = {
                             val keys = row.keys + CustomKey(output = "?")
                             update(layout.replaceRow(rowIndex, CustomRow(keys)))
-                            editingKey = rowIndex to keys.lastIndex
+                            editingRow = rowIndex
+                            editingCol = keys.lastIndex
                         }) { Text("+ key") }
                         TextButton(
                             enabled = layout.rows.size > 1,
@@ -201,7 +208,10 @@ fun LayoutEditorScreen(
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         row.keys.forEachIndexed { keyIndex, key ->
                             AssistChip(
-                                onClick = { editingKey = rowIndex to keyIndex },
+                                onClick = {
+                                    editingRow = rowIndex
+                                    editingCol = keyIndex
+                                },
                                 label = {
                                     val marks = buildString {
                                         if (key.variants.isNotEmpty()) append("·")
@@ -227,29 +237,34 @@ fun LayoutEditorScreen(
         }
     }
 
-    editingKey?.let { (rowIndex, keyIndex) ->
+    if (editingRow >= 0 && editingCol >= 0) {
+        val rowIndex = editingRow
+        val keyIndex = editingCol
         val row = layout.rows.getOrNull(rowIndex)
         val key = row?.keys?.getOrNull(keyIndex)
         if (row == null || key == null) {
-            editingKey = null
+            closeDialog()
         } else {
             KeyEditDialog(
                 key = key,
                 canMoveLeft = keyIndex > 0,
                 canMoveRight = keyIndex < row.keys.lastIndex,
-                onMove = { delta ->
-                    update(layout.replaceRow(rowIndex, CustomRow(row.keys.swap(keyIndex, keyIndex + delta))))
-                    editingKey = rowIndex to keyIndex + delta
+                // Moves carry the dialog's current field state so unsaved
+                // edits aren't silently discarded.
+                onMove = { delta, updated ->
+                    val withEdits = row.keys.mapIndexed { i, k -> if (i == keyIndex) updated else k }
+                    update(layout.replaceRow(rowIndex, CustomRow(withEdits.swap(keyIndex, keyIndex + delta))))
+                    editingCol = keyIndex + delta
                 },
                 onDelete = {
                     update(layout.replaceRow(rowIndex, CustomRow(row.keys.filterIndexed { i, _ -> i != keyIndex })))
-                    editingKey = null
+                    closeDialog()
                 },
                 onSave = { updated ->
                     update(layout.replaceRow(rowIndex, CustomRow(row.keys.mapIndexed { i, k -> if (i == keyIndex) updated else k })))
-                    editingKey = null
+                    closeDialog()
                 },
-                onDismiss = { editingKey = null },
+                onDismiss = ::closeDialog,
             )
         }
     }
@@ -260,7 +275,7 @@ private fun KeyEditDialog(
     key: CustomKey,
     canMoveLeft: Boolean,
     canMoveRight: Boolean,
-    onMove: (Int) -> Unit,
+    onMove: (delta: Int, updated: CustomKey) -> Unit,
     onDelete: () -> Unit,
     onSave: (CustomKey) -> Unit,
     onDismiss: () -> Unit,
@@ -272,6 +287,16 @@ private fun KeyEditDialog(
     var similar by rememberSaveable(key) { mutableStateOf(key.similar) }
     var zalgo by rememberSaveable(key) { mutableStateOf(key.zalgo) }
     var letter by rememberSaveable(key) { mutableStateOf(key.letter) }
+
+    fun buildKey(): CustomKey = key.copy(
+        output = output,
+        label = label,
+        width = width,
+        variants = VariantParser.parse(variantsText),
+        similar = similar,
+        zalgo = zalgo,
+        letter = letter,
+    )
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -312,8 +337,14 @@ private fun KeyEditDialog(
                 CheckboxRow("Shift capitalizes this key", letter) { letter = it }
                 HorizontalDivider()
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(enabled = canMoveLeft, onClick = { onMove(-1) }) { Text("◀ move") }
-                    TextButton(enabled = canMoveRight, onClick = { onMove(1) }) { Text("move ▶") }
+                    TextButton(
+                        enabled = canMoveLeft && output.isNotEmpty(),
+                        onClick = { onMove(-1, buildKey()) },
+                    ) { Text("◀ move") }
+                    TextButton(
+                        enabled = canMoveRight && output.isNotEmpty(),
+                        onClick = { onMove(1, buildKey()) },
+                    ) { Text("move ▶") }
                     Spacer(Modifier.weight(1f))
                     TextButton(onClick = onDelete) { Text("Delete") }
                 }
@@ -322,19 +353,7 @@ private fun KeyEditDialog(
         confirmButton = {
             TextButton(
                 enabled = output.isNotEmpty(),
-                onClick = {
-                    onSave(
-                        key.copy(
-                            output = output,
-                            label = label,
-                            width = width,
-                            variants = VariantParser.parse(variantsText),
-                            similar = similar,
-                            zalgo = zalgo,
-                            letter = letter,
-                        )
-                    )
-                },
+                onClick = { onSave(buildKey()) },
             ) { Text("Save") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },

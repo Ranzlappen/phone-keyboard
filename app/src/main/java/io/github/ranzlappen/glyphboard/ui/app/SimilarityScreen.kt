@@ -43,9 +43,11 @@ fun SimilarityScreen(
     onReset: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    var editingBase by remember { mutableStateOf<String?>(null) }
-    var adding by remember { mutableStateOf(false) }
-    var confirmReset by remember { mutableStateOf(false) }
+    // "" = closed; survives rotation.
+    var editingBaseRaw by rememberSaveable { mutableStateOf("") }
+    val editingBase = editingBaseRaw.takeIf { it.isNotEmpty() }
+    var adding by rememberSaveable { mutableStateOf(false) }
+    var confirmReset by rememberSaveable { mutableStateOf(false) }
     val sorted = remember(map) { map.entries.sortedBy { it.key } }
 
     Column(modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -66,7 +68,7 @@ fun SimilarityScreen(
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clickable { editingBase = base }
+                        .clickable { editingBaseRaw = base }
                         .padding(vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -91,15 +93,15 @@ fun SimilarityScreen(
             initialBase = base ?: "",
             initialVariants = base?.let { map[it] } ?: emptyList(),
             baseEditable = base == null,
-            onDelete = base?.let { { onSetEntry(it, emptyList()); editingBase = null } },
+            onDelete = base?.let { { onSetEntry(it, emptyList()); editingBaseRaw = "" } },
             onSave = { newBase, variants ->
                 onSetEntry(newBase, variants)
                 adding = false
-                editingBase = null
+                editingBaseRaw = ""
             },
             onDismiss = {
                 adding = false
-                editingBase = null
+                editingBaseRaw = ""
             },
         )
     }

@@ -138,7 +138,9 @@ private fun KeyButton(
             val seen = LinkedHashSet<String>()
             key.holdVariants.forEach { seen += if (shiftActive) it.uppercase() else it }
             if (key.includeSimilar) {
-                similarity[baseOutput.lowercase()]?.forEach {
+                // Exact entry first so cased/custom bases work; fall back to
+                // the lowercase form the seed table uses.
+                (similarity[baseOutput] ?: similarity[baseOutput.lowercase()])?.forEach {
                     seen += if (shiftActive) it.uppercase() else it
                 }
             }
@@ -192,6 +194,10 @@ private fun KeyButton(
             .pointerInput(key) {
                 awaitEachGesture {
                     val down = awaitFirstDown().also { it.consume() }
+                    // Identifies this press to the shared popup: a concurrent
+                    // hold on another key takes the popup over, and this
+                    // gesture's later calls become no-ops.
+                    val gestureToken = Any()
                     pressed = true
                     if (currentHaptics) view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
 
@@ -202,74 +208,90 @@ private fun KeyButton(
                     var swipeAcc = 0f
                     var cycled = false
 
-                    when {
-                        key.repeatable -> repeatJob = scope.launch {
-                            currentOnAction(currentAction)
-                            delay(REPEAT_FIRST_DELAY_MS)
-                            while (isActive) {
+                    // The finally block is the ONLY reliable cleanup path:
+                    // gesture cancellation (edge gestures, window hidden,
+                    // pointerInput restart) aborts this block at a suspension
+                    // point with a CancellationException — without it, a
+                    // cancelled backspace-hold would keep auto-repeating and
+                    // an open popup would be stuck on screen.
+                    try {
+                        when {
+                            key.repeatable -> {
+                                // First action fires synchronously so even the
+                                // fastest tap always registers once.
                                 currentOnAction(currentAction)
-                                delay(REPEAT_INTERVAL_MS)
-                            }
-                        }
-                        currentHasPopup -> holdJob = scope.launch {
-                            delay(HOLD_DELAY_MS)
-                            popup?.open(
-                                candidates = currentCandidates,
-                                zalgoEnabled = key.zalgoSlider,
-                                baseText = currentBase.orEmpty(),
-                                anchor = currentBounds,
-                                zalgoStepPx = zalgoStepPx,
-                            )
-                            popupOpened = true
-                            if (currentHaptics) {
-                                view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
-                            }
-                        }
-                        key.longPress != null -> holdJob = scope.launch {
-                            delay(HOLD_DELAY_MS)
-                            holdActionFired = true
-                            currentOnAction(key.longPress)
-                        }
-                    }
-
-                    var lifted = false
-                    while (true) {
-                        val event = awaitPointerEvent()
-                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                        if (change.changedToUp()) {
-                            change.consume()
-                            lifted = true
-                            break
-                        }
-                        if (change.positionChanged()) {
-                            if (popupOpened) {
-                                popup?.drag(currentBounds.topLeft + change.position)
-                            } else if (isSpace && currentCycle != null) {
-                                swipeAcc += change.position.x - change.previousPosition.x
-                                if (abs(swipeAcc) > swipeThresholdPx) {
-                                    currentCycle?.invoke(if (swipeAcc > 0) 1 else -1)
-                                    if (currentHaptics) {
-                                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                repeatJob = scope.launch {
+                                    delay(REPEAT_FIRST_DELAY_MS)
+                                    while (isActive) {
+                                        currentOnAction(currentAction)
+                                        delay(REPEAT_INTERVAL_MS)
                                     }
-                                    cycled = true
-                                    swipeAcc = 0f
                                 }
                             }
-                            change.consume()
+                            currentHasPopup -> holdJob = scope.launch {
+                                delay(HOLD_DELAY_MS)
+                                popup?.open(
+                                    owner = gestureToken,
+                                    candidates = currentCandidates,
+                                    zalgoEnabled = key.zalgoSlider,
+                                    baseText = currentBase.orEmpty(),
+                                    anchor = currentBounds,
+                                    zalgoStepPx = zalgoStepPx,
+                                )
+                                popupOpened = true
+                                if (currentHaptics) {
+                                    view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                }
+                            }
+                            key.longPress != null -> holdJob = scope.launch {
+                                delay(HOLD_DELAY_MS)
+                                holdActionFired = true
+                                currentOnAction(key.longPress)
+                            }
                         }
-                    }
 
-                    repeatJob?.cancel()
-                    holdJob?.cancel()
-                    pressed = false
-
-                    if (popupOpened) {
-                        val committed = popup?.commit()
-                        if (lifted && committed != null) {
-                            currentOnAction(KeyAction.Text(committed))
+                        var lifted = false
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                            if (change.changedToUp()) {
+                                change.consume()
+                                lifted = true
+                                break
+                            }
+                            if (change.positionChanged()) {
+                                if (popupOpened) {
+                                    popup?.drag(gestureToken, currentBounds.topLeft + change.position)
+                                } else if (isSpace && currentCycle != null) {
+                                    swipeAcc += change.position.x - change.previousPosition.x
+                                    if (abs(swipeAcc) > swipeThresholdPx) {
+                                        currentCycle?.invoke(if (swipeAcc > 0) 1 else -1)
+                                        if (currentHaptics) {
+                                            view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                                        }
+                                        cycled = true
+                                        swipeAcc = 0f
+                                    }
+                                }
+                                change.consume()
+                            }
                         }
-                    } else if (lifted && !holdActionFired && !cycled && !key.repeatable) {
-                        currentOnAction(currentAction)
+
+                        if (popupOpened) {
+                            val committed = popup?.commit(gestureToken)
+                            if (lifted && committed != null) {
+                                currentOnAction(KeyAction.Text(committed))
+                            }
+                        } else if (lifted && !holdActionFired && !cycled && !key.repeatable) {
+                            currentOnAction(currentAction)
+                        }
+                    } finally {
+                        repeatJob?.cancel()
+                        holdJob?.cancel()
+                        pressed = false
+                        // No-op if this gesture's popup was already committed
+                        // or another key took the popup over.
+                        popup?.dismiss(gestureToken)
                     }
                 }
             },

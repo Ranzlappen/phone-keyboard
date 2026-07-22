@@ -30,6 +30,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -50,10 +51,12 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.withStateAtLeast
 import io.github.ranzlappen.glyphboard.data.layouts.DefaultLayouts
+import io.github.ranzlappen.glyphboard.data.layouts.LayoutConfig
 import io.github.ranzlappen.glyphboard.ui.app.LayoutEditorScreen
 import io.github.ranzlappen.glyphboard.ui.app.LayoutsListScreen
 import io.github.ranzlappen.glyphboard.ui.app.SimilarityScreen
 import io.github.ranzlappen.glyphboard.ui.theme.GlyphBoardTheme
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -89,19 +92,25 @@ class MainActivity : ComponentActivity() {
         if (intent?.getBooleanExtra(EXTRA_SHOW_PICKER, false) != true) return
         intent.removeExtra(EXTRA_SHOW_PICKER)
         lifecycleScope.launch {
-            // The picker is ignored for unfocused apps; wait until foreground.
+            // The picker is ignored for unfocused apps: RESUMED alone is not
+            // enough (focus lands a few frames later), so wait for it too.
             lifecycle.withStateAtLeast(Lifecycle.State.RESUMED) {}
+            var waited = 0L
+            while (!window.decorView.hasWindowFocus() && waited < 2000L) {
+                delay(50L)
+                waited += 50L
+            }
             getSystemService(InputMethodManager::class.java)?.showInputMethodPicker()
         }
     }
 }
 
-private sealed interface Screen {
-    data object Home : Screen
-    data object Layouts : Screen
-    data class LayoutEdit(val id: String) : Screen
-    data object Similarity : Screen
-}
+// Navigation stack encoded as a '|'-joined route string so it survives
+// rotation via rememberSaveable: "home", "layouts", "edit:<id>", "similarity".
+private const val ROUTE_HOME = "home"
+private const val ROUTE_LAYOUTS = "layouts"
+private const val ROUTE_SIMILARITY = "similarity"
+private const val ROUTE_EDIT_PREFIX = "edit:"
 
 @Composable
 private fun AppRoot(modifier: Modifier = Modifier) {
@@ -109,36 +118,54 @@ private fun AppRoot(modifier: Modifier = Modifier) {
     val app = context.applicationContext as GlyphBoardApp
     val scope = rememberCoroutineScope()
 
-    var stack by remember { mutableStateOf<List<Screen>>(listOf(Screen.Home)) }
-    BackHandler(enabled = stack.size > 1) { stack = stack.dropLast(1) }
+    var route by rememberSaveable { mutableStateOf(ROUTE_HOME) }
+    val stack = route.split('|')
+    BackHandler(enabled = stack.size > 1) { route = route.substringBeforeLast('|') }
+    fun push(screen: String) {
+        route = "$route|$screen"
+    }
 
-    val layoutConfig by app.layouts.config.collectAsState(initial = DefaultLayouts.config())
+    // Optimistic layout config: edits show instantly instead of waiting for
+    // the DataStore write -> flow round trip (which would make "+ key" and
+    // "Add layout" target a stale config and silently bounce).
+    val storedConfig by app.layouts.config.collectAsState(initial = DefaultLayouts.config())
+    var pendingConfig by remember { mutableStateOf<LayoutConfig?>(null) }
+    val layoutConfig = pendingConfig ?: storedConfig
+    LaunchedEffect(storedConfig) {
+        if (storedConfig == pendingConfig) pendingConfig = null
+    }
+    val saveConfig: (LayoutConfig) -> Unit = { config ->
+        pendingConfig = config
+        scope.launch { app.layouts.save(config) }
+    }
+
     val similarityMap by app.similarity.map.collectAsState(initial = emptyMap())
 
-    when (val screen = stack.last()) {
-        Screen.Home -> HomeScreen(
-            modifier = modifier,
-            onOpenLayouts = { stack = stack + Screen.Layouts },
-            onOpenSimilarity = { stack = stack + Screen.Similarity },
-        )
-        Screen.Layouts -> LayoutsListScreen(
+    val screen = stack.last()
+    when {
+        screen == ROUTE_LAYOUTS -> LayoutsListScreen(
             config = layoutConfig,
-            onSave = { scope.launch { app.layouts.save(it) } },
-            onOpenEditor = { id -> stack = stack + Screen.LayoutEdit(id) },
+            onSave = saveConfig,
+            onOpenEditor = { id -> push(ROUTE_EDIT_PREFIX + id) },
             modifier = modifier,
         )
-        is Screen.LayoutEdit -> LayoutEditorScreen(
+        screen.startsWith(ROUTE_EDIT_PREFIX) -> LayoutEditorScreen(
             config = layoutConfig,
-            layoutId = screen.id,
-            onSave = { scope.launch { app.layouts.save(it) } },
-            onBack = { stack = stack.dropLast(1) },
+            layoutId = screen.removePrefix(ROUTE_EDIT_PREFIX),
+            onSave = saveConfig,
+            onBack = { route = route.substringBeforeLast('|') },
             modifier = modifier,
         )
-        Screen.Similarity -> SimilarityScreen(
+        screen == ROUTE_SIMILARITY -> SimilarityScreen(
             map = similarityMap,
             onSetEntry = { base, variants -> scope.launch { app.similarity.setEntry(base, variants) } },
             onReset = { scope.launch { app.similarity.resetToDefaults() } },
             modifier = modifier,
+        )
+        else -> HomeScreen(
+            modifier = modifier,
+            onOpenLayouts = { push(ROUTE_LAYOUTS) },
+            onOpenSimilarity = { push(ROUTE_SIMILARITY) },
         )
     }
 }
@@ -172,10 +199,12 @@ private fun HomeScreen(
             ?.startsWith(context.packageName + "/") == true
     }
     val quickSwitchEnabled = remember(refresh) {
+        // Exact component-prefix match: a bare substring check would let the
+        // .debug variant's service light this up for the release app.
         Settings.Secure.getString(
             context.contentResolver,
             "enabled_accessibility_services",
-        )?.contains(context.packageName) == true
+        )?.split(':')?.any { it.startsWith("${context.packageName}/") } == true
     }
 
     val haptics by app.settings.hapticsEnabled.collectAsState(initial = true)

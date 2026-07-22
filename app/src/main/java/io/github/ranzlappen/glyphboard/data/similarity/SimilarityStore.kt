@@ -5,7 +5,6 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import io.github.ranzlappen.glyphboard.data.prefs.glyphDataStore
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.serialization.SerializationException
 import kotlinx.serialization.builtins.ListSerializer
@@ -32,9 +31,14 @@ class SimilarityStore(private val context: Context) {
     }
 
     suspend fun setEntry(base: String, variants: List<String>) {
-        val current = map.first().toMutableMap()
-        if (variants.isEmpty()) current.remove(base) else current[base] = variants
-        save(current)
+        // Read-modify-write inside a single edit so concurrent edits
+        // can't lose each other's updates.
+        context.glyphDataStore.edit { prefs ->
+            val current = (SimilarityCodec.decode(prefs[key] ?: "") ?: SimilarityDefaults.map)
+                .toMutableMap()
+            if (variants.isEmpty()) current.remove(base) else current[base] = variants
+            prefs[key] = SimilarityCodec.encode(current)
+        }
     }
 
     suspend fun removeEntry(base: String) = setEntry(base, emptyList())

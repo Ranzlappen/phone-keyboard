@@ -62,6 +62,16 @@ class KeyPopupState {
 
     private var zalgoStepPx = 28f
 
+    /**
+     * Gesture token of the key press driving the popup. A second concurrent
+     * hold takes the popup over; the first gesture's later calls then no-op
+     * instead of committing another key's candidate.
+     */
+    private var owner: Any? = null
+
+    /** False until the overlay has written real geometry for this opening. */
+    var laidOut = false
+
     // Reported back by the overlay after layout, in root coordinates.
     var rowLeftInRoot = 0f
     var cellWidthPx = 1f
@@ -79,12 +89,14 @@ class KeyPopupState {
         get() = Zalgo.apply(baseText, zalgoIntensity, Random(baseText.hashCode() * 31 + zalgoIntensity))
 
     fun open(
+        owner: Any,
         candidates: List<String>,
         zalgoEnabled: Boolean,
         baseText: String,
         anchor: Rect,
         zalgoStepPx: Float,
     ) {
+        this.owner = owner
         this.candidates = candidates
         this.zalgoEnabled = zalgoEnabled
         this.baseText = baseText
@@ -92,12 +104,16 @@ class KeyPopupState {
         this.zalgoStepPx = zalgoStepPx.coerceAtLeast(1f)
         selectedIndex = 0
         zalgoIntensity = if (candidates.isEmpty() && zalgoEnabled) 1 else 0
+        laidOut = false
         visible = true
     }
 
     /** [position] is the pointer location in root coordinates. */
-    fun drag(position: Offset) {
-        if (!visible || cellCount == 0) return
+    fun drag(owner: Any, position: Offset) {
+        if (owner !== this.owner) return
+        // Ignore drags until the overlay has laid out; the previous popup's
+        // geometry would map positions onto the wrong cells.
+        if (!visible || !laidOut || cellCount == 0) return
         selectedIndex = ((position.x - rowLeftInRoot) / cellWidthPx)
             .toInt()
             .coerceIn(0, cellCount - 1)
@@ -109,23 +125,32 @@ class KeyPopupState {
     }
 
     /** Returns the text to commit (or null when nothing is selected) and closes. */
-    fun commit(): String? {
+    fun commit(owner: Any): String? {
+        if (owner !== this.owner) return null
         val result = when {
             !visible -> null
             inZalgoMode -> zalgoPreview.takeIf { it.isNotEmpty() }
             selectedIndex in candidates.indices -> candidates[selectedIndex]
             else -> null
         }
-        dismiss()
+        close()
         return result
     }
 
-    fun dismiss() {
+    /** Closes the popup if [owner] still drives it (safe in cleanup paths). */
+    fun dismiss(owner: Any) {
+        if (owner !== this.owner) return
+        close()
+    }
+
+    private fun close() {
+        owner = null
         visible = false
         candidates = emptyList()
         zalgoEnabled = false
         selectedIndex = 0
         zalgoIntensity = 0
+        laidOut = false
     }
 }
 
@@ -140,16 +165,22 @@ private val TRACK_HEIGHT = 140.dp
  */
 @Composable
 fun KeyPopupOverlay(state: KeyPopupState, modifier: Modifier = Modifier) {
-    if (!state.visible || state.cellCount == 0) return
     val density = LocalDensity.current
     val colors = MaterialTheme.colorScheme
-    var origin by remember { mutableStateOf(Offset.Zero) }
+    // Always composed (draws nothing while hidden) so the overlay's own
+    // position is already known when a popup opens — geometry is then
+    // correct on the very first visible frame.
+    var origin by remember { mutableStateOf<Offset?>(null) }
 
     BoxWithConstraints(
         modifier
             .fillMaxSize()
             .onGloballyPositioned { origin = it.positionInRoot() },
     ) {
+        val overlayOrigin = origin
+        if (!state.visible || state.cellCount == 0 || overlayOrigin == null) {
+            return@BoxWithConstraints
+        }
         val panelW = constraints.maxWidth.toFloat()
         val marginPx = with(density) { 8.dp.toPx() }
         val rowHpx = with(density) { CELL_HEIGHT.toPx() }
@@ -160,14 +191,15 @@ fun KeyPopupOverlay(state: KeyPopupState, modifier: Modifier = Modifier) {
         )
         val rowWpx = cellWpx * state.cellCount
 
-        val anchorLocal = state.anchor.translate(-origin)
+        val anchorLocal = state.anchor.translate(-overlayOrigin)
         val left = (anchorLocal.center.x - rowWpx / 2f)
             .coerceIn(marginPx, (panelW - marginPx - rowWpx).coerceAtLeast(marginPx))
         val top = (anchorLocal.top - rowHpx - gapPx).coerceAtLeast(marginPx)
 
         // Geometry the pressed key needs to map drag positions onto cells.
-        state.rowLeftInRoot = left + origin.x
+        state.rowLeftInRoot = left + overlayOrigin.x
         state.cellWidthPx = cellWpx
+        state.laidOut = true
 
         val cellW = with(density) { cellWpx.toDp() }
 

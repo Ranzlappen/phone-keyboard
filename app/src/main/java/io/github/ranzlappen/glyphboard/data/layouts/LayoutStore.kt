@@ -5,7 +5,6 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import io.github.ranzlappen.glyphboard.data.prefs.glyphDataStore
 import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 /**
@@ -29,25 +28,33 @@ class LayoutStore(private val context: Context) {
     }
 
     suspend fun setActive(id: String) {
-        val current = config.first()
-        if (current.layouts.any { it.id == id }) {
-            save(current.copy(activeId = id))
+        // Read-modify-write inside a single edit so concurrent writers
+        // (space swipes vs. app edits) can't lose updates.
+        context.glyphDataStore.edit { prefs ->
+            val current = LayoutCodec.decode(prefs[key] ?: "") ?: DefaultLayouts.config()
+            if (current.layouts.any { it.id == id }) {
+                prefs[key] = LayoutCodec.encode(current.copy(activeId = id))
+            }
         }
     }
 
     /**
      * Space-swipe handler: moves the active layout by [delta] through the
-     * list (wrapping), persists, and returns the newly active layout.
+     * list (wrapping), persists atomically, and returns the new layout.
      */
     suspend fun cycleActive(delta: Int): CustomLayout? {
-        val current = config.first()
-        if (current.layouts.isEmpty()) return null
-        val activeIndex = current.layouts
-            .indexOfFirst { it.id == current.activeId }
-            .coerceAtLeast(0)
-        val size = current.layouts.size
-        val next = current.layouts[(activeIndex + delta % size + size) % size]
-        save(current.copy(activeId = next.id))
+        var next: CustomLayout? = null
+        context.glyphDataStore.edit { prefs ->
+            val current = LayoutCodec.decode(prefs[key] ?: "") ?: DefaultLayouts.config()
+            if (current.layouts.isEmpty()) return@edit
+            val activeIndex = current.layouts
+                .indexOfFirst { it.id == current.activeId }
+                .coerceAtLeast(0)
+            val size = current.layouts.size
+            val chosen = current.layouts[(activeIndex + delta % size + size) % size]
+            prefs[key] = LayoutCodec.encode(current.copy(activeId = chosen.id))
+            next = chosen
+        }
         return next
     }
 }
