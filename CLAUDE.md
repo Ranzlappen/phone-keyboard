@@ -1,0 +1,141 @@
+# GlyphBoard (Android IME)
+
+A Kotlin/Compose Android input method (system keyboard) whose signature
+feature is a charmap-style browser of the entire Unicode repertoire, opened
+with the Ω key. Repo name is `phone-keyboard`; product name is **GlyphBoard**;
+package ID is `io.github.ranzlappen.glyphboard`.
+
+## Architecture
+
+Single-module Android app, no native code, no networking layer (by design —
+see Key Conventions). Two entry points share one process and one DataStore:
+
+* **`ime/GlyphBoardService`** — the `InputMethodService`. It implements
+  `LifecycleOwner` + `ViewModelStoreOwner` + `SavedStateRegistryOwner` and
+  installs itself as the view-tree owners on the IME window's decor view so a
+  `ComposeView` can run inside the service. All text committing happens here
+  (`performAction` / `insertCodePoint` on the current `InputConnection`);
+  the Compose layer only reports `KeyAction`s.
+* **`ui/keyboard/`** — pure-Kotlin key model + layouts (`KeyboardLayout.kt`),
+  the key renderer (`KeyboardView.kt`, gesture handling: tap, long-press,
+  backspace autorepeat), and the mode/shift state machine (`ImeRoot.kt`).
+* **`ui/unicode/`** — the Ω browser (`UnicodeBrowser.kt`): one
+  `LazyVerticalGrid` over the flat catalog item list with full-span block
+  headers, a block jump-index overlay, name/code point search fed by an
+  in-panel mini keyboard (an IME cannot summon an IME for its own text
+  fields — never use a focusable `TextField` inside the keyboard window),
+  and a long-press detail card. Overlays are plain in-panel `Box`es, never
+  `Dialog`s (dialogs from IME windows need window-token workarounds).
+* **`data/unicode/UnicodeCatalog.kt`** — builds the catalog at runtime from
+  the platform ICU (`android.icu.lang.UCharacter` / `UnicodeSet`): every
+  assigned code point except Cc/Cs/Cn/Co, grouped into blocks, optionally
+  filtered by `Paint.hasGlyph`. Cached per filter flag; always built on
+  `Dispatchers.Default`. No bundled Unicode data files.
+* **`data/prefs/`** — DataStore-backed settings (haptics, hide-unsupported)
+  and the recents list (hex-encoded string; codec is pure and unit-tested).
+* **`util/CodePoints.kt`** — pure-JVM code point helpers.
+* **`MainActivity.kt`** — setup flow (enable/select IME with live status),
+  test text field, settings switches.
+
+## Build & Development
+
+```
+./gradlew assembleDebug              # Build debug APK
+./gradlew assembleRelease            # Build release APK (needs signing config)
+./gradlew bundleRelease              # Build release AAB
+./gradlew installDebug               # Install on attached device
+./gradlew testDebugUnitTest          # JVM unit tests
+./gradlew lintDebug                  # Android Lint
+```
+
+There is no Android SDK in the usual Claude Code environments — CI is the
+compile gate unless you install one.
+
+## Key Conventions
+
+* **No network, ever.** The manifest declares zero permissions. Adding
+  INTERNET (or any permission) breaks the product's core privacy promise and
+  needs an explicit maintainer decision first.
+* **The IME never spies**: no logging of committed text, no analytics.
+* **Unicode data comes from the platform ICU at runtime** — do not bundle
+  UnicodeData.txt or similar. `Character.getName` / `android.icu` provide
+  names and blocks; the catalog grows automatically with OS updates.
+* **Keep `util/` and `ui/keyboard/KeyboardLayout.kt` free of Android imports.**
+  They are the unit-tested, KMP-portable core for a future iOS port.
+* **Compose-in-IME rules**: view-tree owners are set on the decor view in
+  `onCreateInputView`; lifecycle is driven from `onWindowShown`/`onWindowHidden`;
+  `onEvaluateFullscreenMode` returns false. Don't introduce `Dialog`-based
+  Compose components (`ModalBottomSheet`, `AlertDialog`, `DropdownMenu`) into
+  the IME window.
+* **Debug builds install alongside release** (`applicationIdSuffix .debug`),
+  so both keyboards can be enabled at once while testing.
+* **Package ID is permanent**: `io.github.ranzlappen.glyphboard`.
+* **Score one flat grid**: the browser is intentionally a single scrollable
+  list subdivided by block headers (charmap model), not per-block pages.
+
+## Deployment & CI/CD
+
+| Workflow | Trigger | Scope | Deploys |
+| --- | --- | --- | --- |
+| `ci-android.yml` | push to `main`, pull_request to `main`, tag `v*`, workflow_dispatch | Source paths (markdown, `LICENSE`, `.gitignore` excluded via `paths-ignore`) | Artifacts on every run; auto-tags + publishes a GitHub Release (with APK/AAB) on every push to `main` (patch bump from latest tag; first release is v1.0.0) and on explicit `v*` tags. `[skip release]` in the commit message skips the auto-release. |
+
+**Concurrency**: `ci-${{ github.ref }}`, `cancel-in-progress: true`.
+
+**Runtime versions**: JDK 17 (Temurin), Android SDK 36, Gradle 9.5.1
+(wrapper), AGP 9.2 (built-in Kotlin — no standalone kotlin-android plugin),
+Kotlin 2.3.
+
+**Required secrets** (signed release APK/AAB; optional — CI passes without
+them and ships debug-signed APK + unsigned AAB):
+
+| Secret | Purpose |
+| --- | --- |
+| `KEYSTORE_BASE64` | Base64 of `release.keystore` |
+| `KEYSTORE_PASSWORD` | Keystore password |
+| `KEY_ALIAS` | Signing key alias |
+| `KEY_PASSWORD` | Signing key password |
+
+## Tech Stack
+
+| Layer | Technology | Why |
+| --- | --- | --- |
+| Language | Kotlin 2.3 | Android primary; KMP path for iOS later |
+| UI | Jetpack Compose + Material 3 | Single UI toolkit for app *and* IME |
+| IME | `InputMethodService` + Compose view-tree owners | Standard system keyboard API |
+| Unicode data | Platform ICU (`android.icu`) | Zero bundled data, auto-updates with OS |
+| Persistence | `androidx.datastore.preferences` | Settings + recents |
+| Build | Gradle 9.5.1, AGP 9.2 | Matches sibling repos |
+| CI | GitHub Actions | Matches Ranzlappen/repo-standards |
+
+## Project Structure
+
+```
+phone-keyboard/
+├── app/
+│   ├── build.gradle.kts
+│   ├── proguard-rules.pro
+│   └── src/
+│       ├── main/
+│       │   ├── AndroidManifest.xml
+│       │   ├── java/io/github/ranzlappen/glyphboard/
+│       │   └── res/                 # strings, themes, method.xml, adaptive icon
+│       └── test/                    # JVM unit tests (pure-Kotlin layers)
+├── gradle/ (libs.versions.toml, wrapper)
+├── .github/ (workflows/ci-android.yml, dependabot.yml, templates)
+├── build.gradle.kts / settings.gradle.kts / gradle.properties
+├── CLAUDE.md
+└── README.md
+```
+
+## Post-task self-check
+
+After every turn that produces code or workflow changes, scan for:
+
+- New Gradle dependencies → add to `gradle/libs.versions.toml`, not inline.
+- New permissions → almost certainly wrong for this app; stop and reconsider.
+- Android imports leaking into `util/` or `KeyboardLayout.kt` → move them out.
+- Dialog-based Compose components in the IME window → replace with overlays.
+- New CI secrets → document in this file and README.
+- README "Features" / this file kept in sync with behavior changes.
+
+If nothing applies, say "no doc/workflow updates needed."

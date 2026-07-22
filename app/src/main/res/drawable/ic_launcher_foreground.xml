@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Omega glyph: the key GlyphBoard adds to every keyboard layout. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M34,82 L34,74 L42.5,74 C36.5,68.5 32,60.8 32,52
+            A22,22 0 0 1 76,52
+            C76,60.8 71.5,68.5 65.5,74 L74,74 L74,82 L60,82 L60,69
+            C64.8,64.9 68,58.8 68,52
+            A14,14 0 1 0 40,52
+            C40,58.8 43.2,64.9 48,69 L48,82 Z" />
+</vector>

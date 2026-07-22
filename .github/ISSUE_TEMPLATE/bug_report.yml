@@ -1,0 +1,35 @@
+name: Bug report
+description: Something in GlyphBoard is broken or behaves unexpectedly.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, what happened instead?
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: GlyphBoard version
+      placeholder: "e.g. 1.0.0 (Settings → About, or the release you installed)"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+      placeholder: "e.g. Pixel 8, Android 15"
+    validations:
+      required: true
+  - type: input
+    id: app
+    attributes:
+      label: App you were typing into (if relevant)
+      placeholder: "e.g. WhatsApp, Chrome address bar"
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots, the specific character/block involved, logs.
