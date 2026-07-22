@@ -19,6 +19,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -93,9 +94,14 @@ private fun KeyButton(
         shiftActive -> key.label.uppercase()
         else -> key.label
     }
-    val effectiveAction =
+    // The pointerInput block below is keyed on (key, haptics) only, so it is
+    // NOT restarted when shift flips; read the current values through
+    // rememberUpdatedState or a shift change would commit stale text.
+    val effectiveAction by rememberUpdatedState(
         if (shiftActive && key.action is KeyAction.Text) KeyAction.Text(key.action.text.uppercase())
         else key.action
+    )
+    val currentOnAction by rememberUpdatedState(onAction)
 
     val colors = MaterialTheme.colorScheme
     val shiftEngaged = key.action == KeyAction.Shift && shift != ShiftState.Off
@@ -128,10 +134,10 @@ private fun KeyButton(
                     var longPressFired = false
                     if (key.repeatable) {
                         repeatJob = scope.launch {
-                            onAction(effectiveAction)
+                            currentOnAction(effectiveAction)
                             delay(REPEAT_FIRST_DELAY_MS)
                             while (isActive) {
-                                onAction(effectiveAction)
+                                currentOnAction(effectiveAction)
                                 delay(REPEAT_INTERVAL_MS)
                             }
                         }
@@ -139,7 +145,7 @@ private fun KeyButton(
                         longPressJob = scope.launch {
                             delay(LONG_PRESS_MS)
                             longPressFired = true
-                            onAction(key.longPress)
+                            currentOnAction(key.longPress)
                         }
                     }
                     val up = waitForUpOrCancellation()
@@ -147,7 +153,7 @@ private fun KeyButton(
                     longPressJob?.cancel()
                     pressed = false
                     if (!key.repeatable && up != null && !longPressFired) {
-                        onAction(effectiveAction)
+                        currentOnAction(effectiveAction)
                     }
                 }
             },
