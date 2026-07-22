@@ -78,6 +78,9 @@ compile gate unless you install one.
 | Workflow | Trigger | Scope | Deploys |
 | --- | --- | --- | --- |
 | `ci-android.yml` | push to `main`, pull_request to `main`, tag `v*`, workflow_dispatch | Source paths (markdown, `LICENSE`, `.gitignore` excluded via `paths-ignore`) | Artifacts on every run; auto-tags + publishes a GitHub Release (with APK/AAB) on every push to `main` (patch bump from latest tag; first release is v1.0.0) and on explicit `v*` tags. `[skip release]` in the commit message skips the auto-release. |
+| `security-scan.yml` | PR + push to `main`, weekly cron, `branch_protection_rule`, dispatch | Whole repo | CodeQL (`java-kotlin`, `build-mode: none` — no app build needed), gitleaks secret scan, and OpenSSF Scorecard (Scorecard runs on push/schedule/dispatch only). Results land in the Security tab. |
+| `dependency-review.yml` | pull_request to `main` | Dependency manifest changes | Per-PR gate; fails a PR that introduces a high/critical CVE and comments the diff. No deploy. |
+| `stale.yml` | daily cron, dispatch | Issues + PRs | **Disabled by default** — only runs when repo variable `STALE_ENABLED=true`. Marks/closes stale issues (60/7 days) and PRs (90/14 days); dependency PRs exempt. |
 
 **Concurrency**: `ci-${{ github.ref }}`, `cancel-in-progress: true`.
 

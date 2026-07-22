@@ -93,6 +93,16 @@ with the artifacts (`[skip release]` in the commit message skips it). Tag
 secrets; without them CI still passes and ships a debug-signed APK plus an
 unsigned AAB.
 
+Alongside the build workflow the repo runs:
+
+- **Security scan** — CodeQL static analysis (Kotlin), gitleaks secret
+  scanning, and an OpenSSF Scorecard, on every PR/push plus a weekly sweep.
+- **Dependency review** — blocks any PR that pulls in a dependency with a
+  known high/critical CVE.
+- **Stale bot** — issue/PR housekeeping, shipped disabled (opt in with the
+  `STALE_ENABLED=true` repository variable).
+- **Dependabot** — weekly grouped updates for Gradle deps and GitHub Actions.
+
 ## License
 
 [MIT](LICENSE)

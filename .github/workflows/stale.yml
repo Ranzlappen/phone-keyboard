@@ -1,0 +1,61 @@
+# Stale issue / PR housekeeping.
+#
+# Marks an issue stale after 60 days of inactivity, closes it after another 7.
+# PRs get 90 days to stale, 14 to close. Pinned/security/keep-open items and
+# dependency PRs are exempt.
+#
+# DISABLED BY DEFAULT. Enable by setting repository variable STALE_ENABLED=true
+# (Settings -> Secrets and variables -> Actions -> Variables -> New variable).
+
+name: Stale
+
+on:
+  schedule:
+    # Daily at 04:00 UTC. The job is idempotent.
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  pull-requests: write
+
+concurrency:
+  group: stale
+  cancel-in-progress: false
+
+jobs:
+  stale:
+    name: Mark / close stale items
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ vars.STALE_ENABLED == 'true' }}
+    steps:
+      - name: Apply stale policy
+        uses: actions/stale@v9
+        with:
+          days-before-issue-stale: 60
+          days-before-issue-close: 7
+          stale-issue-label: stale
+          stale-issue-message: |
+            This issue has been automatically marked as stale after 60 days
+            of inactivity. It will close in 7 days unless someone adds a
+            comment or removes the `stale` label.
+          close-issue-message: |
+            Closing automatically — feel free to reopen if this is still
+            relevant. This is a housekeeping bot.
+          days-before-pr-stale: 90
+          days-before-pr-close: 14
+          stale-pr-label: stale
+          stale-pr-message: |
+            This pull request has been automatically marked as stale after
+            90 days of inactivity. It will close in 14 days unless someone
+            pushes a new commit or removes the `stale` label.
+          close-pr-message: |
+            Closing automatically — please reopen and rebase if you'd like to
+            continue. This is a housekeeping bot.
+          exempt-issue-labels: 'pinned,security,keep-open'
+          exempt-pr-labels: 'pinned,security,keep-open,dependencies'
+          exempt-all-milestones: true
+          exempt-all-assignees: true
+          operations-per-run: 100
+          ascending: true
