@@ -31,11 +31,30 @@ see Key Conventions). Two entry points share one process and one DataStore:
   assigned code point except Cc/Cs/Cn/Co, grouped into blocks, optionally
   filtered by `Paint.hasGlyph`. Cached per filter flag; always built on
   `Dispatchers.Default`. No bundled Unicode data files.
-* **`data/prefs/`** — DataStore-backed settings (haptics, hide-unsupported)
-  and the recents list (hex-encoded string; codec is pure and unit-tested).
-* **`util/CodePoints.kt`** — pure-JVM code point helpers.
-* **`MainActivity.kt`** — setup flow (enable/select IME with live status),
-  test text field, settings switches.
+* **`data/prefs/`** — DataStore-backed settings (haptics, hide-unsupported),
+  the recents list, and pinned characters/blocks (pure, unit-tested codecs).
+  All persistence shares the single DataStore in `GlyphDataStore.kt`.
+* **`data/layouts/`** — the custom-layout model (`CustomLayout` etc.,
+  kotlinx-serialization, pure Kotlin), the built-in QWERTY seed
+  (`DefaultLayouts`), the JSON codec, and `LayoutStore` (layout list = the
+  space-swipe cycle order + active id, one JSON blob in DataStore).
+  `ui/keyboard/LayoutConverter.kt` (also pure) turns a `CustomLayout` into
+  renderable key rows, attaching shift/backspace and the bottom row.
+* **`data/similarity/`** — the editable lookalike database behind the
+  per-key "similar characters" popup checkbox; seeded from
+  `SimilarityDefaults` (pure, tested).
+* **`ui/keyboard/KeyPopup.kt`** — the hold-popup engine: `KeyPopupState`
+  (candidate row + optional vertical zalgo slider, all geometry in root
+  coordinates) and the overlay renderer. The pressed key keeps pointer
+  capture and forwards drag positions; the overlay never handles input.
+* **`ime/KeyboardSwitchService`** — optional accessibility service bound to
+  the system accessibility button for global keyboard switching. It must
+  keep declaring **zero data access** (no event types, no window content).
+* **`util/CodePoints.kt`, `util/Zalgo.kt`** — pure-JVM helpers.
+* **`MainActivity.kt` + `ui/app/`** — setup flow (enable/select IME and the
+  quick-switch service, with live status), test text field, settings, the
+  layout editor, and the similarity-database editor. Dialog-based Compose is
+  fine HERE (it's a normal activity) — never in the IME window.
 
 ## Build & Development
 
@@ -69,6 +88,14 @@ compile gate unless you install one.
   the IME window.
 * **Debug builds install alongside release** (`applicationIdSuffix .debug`),
   so both keyboards can be enabled at once while testing.
+* **`signing/fallback.keystore` is intentionally public** (password
+  `glyphboard`): it signs debug builds and secretless release builds so every
+  build shares a stable signature and CI releases always ship an installable
+  release APK. It provides zero security — never treat it as a secret, and
+  never use it once real `KEYSTORE_*` secrets exist.
+* **Keep `util/`, `KeyboardLayout.kt`, `LayoutConverter.kt`, and the
+  `data/layouts` model files free of Android imports** (kotlinx.serialization
+  is fine — it's KMP).
 * **Package ID is permanent**: `io.github.ranzlappen.glyphboard`.
 * **Score one flat grid**: the browser is intentionally a single scrollable
   list subdivided by block headers (charmap model), not per-block pages.
@@ -77,7 +104,7 @@ compile gate unless you install one.
 
 | Workflow | Trigger | Scope | Deploys |
 | --- | --- | --- | --- |
-| `ci-android.yml` | push to `main`, pull_request to `main`, tag `v*`, workflow_dispatch | Source paths (markdown, `LICENSE`, `.gitignore` excluded via `paths-ignore`) | Artifacts on every run; auto-tags + publishes a GitHub Release (with APK/AAB) on every push to `main` (patch bump from latest tag; first release is v1.0.0) and on explicit `v*` tags. `[skip release]` in the commit message skips the auto-release. |
+| `ci-android.yml` | push to `main`, pull_request to `main`, tag `v*`, workflow_dispatch | Source paths (markdown, `LICENSE`, `.gitignore` excluded via `paths-ignore`) | Artifacts on every run; auto-tags + publishes a GitHub Release on every push to `main` (patch bump from latest tag; first release is v1.0.0) and on explicit `v*` tags. Every release carries debug APK, release APK (real-signed with secrets, fallback-signed without), and AAB. `[skip release]` in the commit message skips the auto-release. |
 | `security-scan.yml` | PR + push to `main`, weekly cron, `branch_protection_rule`, dispatch | Whole repo | CodeQL (`java-kotlin`, `build-mode: none` — no app build needed), gitleaks secret scan, and OpenSSF Scorecard (Scorecard runs on push/schedule/dispatch only). Results land in the Security tab. |
 | `dependency-review.yml` | pull_request to `main` | Dependency manifest changes | Per-PR gate; fails a PR that introduces a high/critical CVE and comments the diff. No deploy. |
 | `stale.yml` | daily cron, dispatch | Issues + PRs | **Disabled by default** — only runs when repo variable `STALE_ENABLED=true`. Marks/closes stale issues (60/7 days) and PRs (90/14 days); dependency PRs exempt. |

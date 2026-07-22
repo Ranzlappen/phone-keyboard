@@ -156,9 +156,15 @@ fun LayoutEditorScreen(
         modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        // Local buffer: driving the field straight from DataStore would
+        // round-trip every keystroke through an async write and jump the cursor.
+        var name by rememberSaveable(layout.id) { mutableStateOf(layout.name) }
         OutlinedTextField(
-            value = layout.name,
-            onValueChange = { update(layout.copy(name = it.take(24))) },
+            value = name,
+            onValueChange = {
+                name = it.take(24)
+                update(layout.copy(name = name))
+            },
             label = { Text("Layout name") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),

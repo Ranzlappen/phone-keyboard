@@ -36,12 +36,27 @@ or combining diacritic.
 - **Sensible rendering**: combining marks show on a dotted circle ◌, invisible
   characters (ZWJ, no-break space…) show their hex code, and characters the
   device has no font glyph for are hidden by default (toggle in settings).
+- **Custom layouts, unlimited**: swipe left/right on the space bar to cycle
+  through any number of layouts — every one fully editable in the app,
+  including the default QWERTY: per-key label, typed text, width, and
+  SwiftKey-style hold popups (hold a key, slide across the variants, release
+  to type).
+- **Similarity popups**: an editable lookalike database (u → ʋ υ ᴜ 𝕦…,
+  seeded for a–z) merges into any key's hold popup via a per-key checkbox.
+- **Zalgo slider**: another per-key checkbox adds a vertical slider to the
+  hold popup — drag up for live, increasingly cursed z̴̪̈a̶͖͂l̷̻̽g̸͚̈o̵̘̊ text.
+- **Pinning**: pin single characters (long-press → Pin) into a section above
+  Recents, or entire blocks (long-press a block name) right below it.
+- **Quick switch button**: optional accessibility service that puts keyboard
+  switching on the system accessibility button — one tap to GlyphBoard from
+  anywhere, tap again for the picker. Declares zero data access: no events,
+  no window content, nothing to read.
 - **Private by design**: no INTERNET permission, no permissions at all, no
   autocorrect, no logging. What you type never leaves the input field.
 - **Material 3** with dynamic color (Android 12+) and dark mode.
 
 Deliberately **not** included (yet): autocorrect/suggestions, voice input,
-translation, stickers, swipe typing, additional language layouts.
+translation, stickers, swipe typing.
 
 ## Install
 
@@ -90,8 +105,10 @@ AAB/APK, then auto-tags the next patch version and publishes a GitHub Release
 with the artifacts (`[skip release]` in the commit message skips it). Tag
 `vX.Y.Z` manually for explicit versions. Release signing uses the
 `KEYSTORE_BASE64` / `KEYSTORE_PASSWORD` / `KEY_ALIAS` / `KEY_PASSWORD`
-secrets; without them CI still passes and ships a debug-signed APK plus an
-unsigned AAB.
+secrets; without them, builds are signed by the **committed public fallback
+keystore** (`signing/fallback.keystore`, password `glyphboard`) — it provides
+no security, but keeps signatures stable so in-place updates work, and it
+means every GitHub Release carries an installable release-variant APK.
 
 Alongside the build workflow the repo runs:
 
