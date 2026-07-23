@@ -18,4 +18,11 @@ class ImeUiState {
 
     /** Layout name flashed over the keyboard after a space-bar swipe switch. */
     var layoutToast by mutableStateOf<String?>(null)
+
+    /** Sticky zalgo intensity set from the shift key's slider; 0 = off. */
+    var zalgoLevel by mutableStateOf(0)
+
+    /** One-shot modifiers set by Ctrl/Alt function keys, applied to the next key. */
+    var ctrl by mutableStateOf(false)
+    var alt by mutableStateOf(false)
 }

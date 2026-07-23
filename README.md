@@ -40,17 +40,26 @@ or combining diacritic.
   through any number of layouts — every one fully editable in the app,
   including the default QWERTY: per-key label, typed text, width, and
   SwiftKey-style hold popups (hold a key, slide across the variants, release
-  to type).
+  to type — long lists wrap onto multiple popup rows). The editor shows a
+  live tap-to-edit preview of the layout.
+- **System function keys**: assign arrows, Home/End/PgUp/PgDn, Tab, Esc,
+  F1–F12, copy/cut/paste/select-all, play/pause/next/prev, volume up/down/
+  mute, Caps Lock, and one-shot **Ctrl/Alt modifiers** (Ctrl+C, Ctrl+Z…
+  sent as real key events; shift+arrows selects text) to any key.
 - **Similarity popups**: an editable lookalike database (u → ʋ υ ᴜ 𝕦…,
   seeded for a–z) merges into any key's hold popup via a per-key checkbox.
-- **Zalgo slider**: another per-key checkbox adds a vertical slider to the
-  hold popup — drag up for live, increasingly cursed z̴̪̈a̶͖͂l̷̻̽g̸͚̈o̵̘̊ text.
+- **Zalgo slider**: a per-key checkbox adds a vertical slider to the hold
+  popup — drag up for live, increasingly cursed z̴̪̈a̶͖͂l̷̻̽g̸͚̈o̵̘̊ text. Or enable the
+  per-layout **shift-key slider**: hold ⇧, set a level, and everything you
+  type gets zalgo-fied until you set it back to zero.
 - **Pinning**: pin single characters (long-press → Pin) into a section above
   Recents, or entire blocks (long-press a block name) right below it.
 - **Quick switch button**: optional accessibility service that puts keyboard
   switching on the system accessibility button — one tap to GlyphBoard from
-  anywhere, tap again for the picker. Declares zero data access: no events,
-  no window content, nothing to read.
+  anywhere, tap again to hop straight back to the keyboard you came from.
+  Declares zero data access: no events, no window content, nothing to read.
+  (Android 13+ sideloads: allow restricted settings via App info → ⋮ first —
+  the app links you there.)
 - **Private by design**: no INTERNET permission, no permissions at all, no
   autocorrect, no logging. What you type never leaves the input field.
 - **Material 3** with dynamic color (Android 12+) and dark mode.

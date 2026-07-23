@@ -1,8 +1,14 @@
 package io.github.ranzlappen.glyphboard.ui.keyboard
 
+import io.github.ranzlappen.glyphboard.data.layouts.FnKey
+
 /** Everything a key press can mean. Committing actions reach the IME service; the rest is UI state. */
 sealed interface KeyAction {
     data class Text(val text: String) : KeyAction
+
+    /** A system/function key from the layout editor (arrows, F-keys, clipboard, media…). */
+    data class Fn(val key: FnKey) : KeyAction
+
     data object Backspace : KeyAction
     data object Enter : KeyAction
     data object Space : KeyAction

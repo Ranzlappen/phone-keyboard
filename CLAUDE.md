@@ -36,17 +36,26 @@ see Key Conventions). Two entry points share one process and one DataStore:
   All persistence shares the single DataStore in `GlyphDataStore.kt`.
 * **`data/layouts/`** — the custom-layout model (`CustomLayout` etc.,
   kotlinx-serialization, pure Kotlin), the built-in QWERTY seed
-  (`DefaultLayouts`), the JSON codec, and `LayoutStore` (layout list = the
+  (`DefaultLayouts`), the JSON codec, `FnKey` (semantic system/function keys:
+  arrows, F1–F12, clipboard, media/volume, Ctrl/Alt/CapsLock — persisted by
+  enum name, so names are append-only), and `LayoutStore` (layout list = the
   space-swipe cycle order + active id, one JSON blob in DataStore).
   `ui/keyboard/LayoutConverter.kt` (also pure) turns a `CustomLayout` into
-  renderable key rows, attaching shift/backspace and the bottom row.
+  renderable key rows, attaching shift/backspace and the bottom row. The IME
+  service maps `FnKey` to key events (with Ctrl/Alt/Shift meta for combos and
+  shift+arrow selection), `performContextMenuAction`, or `AudioManager`;
+  Ctrl/Alt/CapsLock and the sticky shift-slider zalgo level are UI state in
+  `ImeUiState`, applied in `ImeRoot.dispatch`.
 * **`data/similarity/`** — the editable lookalike database behind the
   per-key "similar characters" popup checkbox; seeded from
   `SimilarityDefaults` (pure, tested).
 * **`ui/keyboard/KeyPopup.kt`** — the hold-popup engine: `KeyPopupState`
-  (candidate row + optional vertical zalgo slider, all geometry in root
-  coordinates) and the overlay renderer. The pressed key keeps pointer
-  capture and forwards drag positions; the overlay never handles input.
+  (candidate grid that wraps onto multiple rows, plus optional vertical zalgo
+  slider, all geometry in root coordinates) and the overlay renderer. The
+  pressed key keeps pointer capture and forwards drag positions; the overlay
+  never handles input. **The overlay must be given `Modifier.matchParentSize()`
+  — any size-dictating modifier (`fillMaxSize`) inflates the wrap-content IME
+  window to full screen height** (this shipped as a bug once; don't repeat it).
 * **`ime/KeyboardSwitchService`** — optional accessibility service bound to
   the system accessibility button for global keyboard switching. It must
   keep declaring **zero data access** (no event types, no window content).

@@ -1,20 +1,23 @@
 package io.github.ranzlappen.glyphboard.ui.app
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.Checkbox
@@ -30,17 +33,22 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.ranzlappen.glyphboard.data.layouts.CustomKey
 import io.github.ranzlappen.glyphboard.data.layouts.CustomLayout
 import io.github.ranzlappen.glyphboard.data.layouts.CustomRow
 import io.github.ranzlappen.glyphboard.data.layouts.DefaultLayouts
+import io.github.ranzlappen.glyphboard.data.layouts.FnKey
 import io.github.ranzlappen.glyphboard.data.layouts.LayoutConfig
 import io.github.ranzlappen.glyphboard.data.layouts.VariantParser
 import java.util.UUID
@@ -57,10 +65,9 @@ fun LayoutsListScreen(
     modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+        modifier.verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("Keyboard layouts", fontSize = 22.sp, fontWeight = FontWeight.Bold)
         Text(
             "Swipe left/right on the space bar to cycle through this list. " +
                 "The radio button picks the active layout; tap a name to edit it — " +
@@ -71,51 +78,64 @@ fun LayoutsListScreen(
 
         config.layouts.forEachIndexed { index, layout ->
             Card {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    RadioButton(
-                        selected = layout.id == config.activeId,
-                        onClick = { onSave(config.copy(activeId = layout.id)) },
-                    )
-                    Column(
+                Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp)) {
+                    Row(
                         Modifier
-                            .weight(1f)
-                            .padding(vertical = 8.dp),
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { onOpenEditor(layout.id) },
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        TextButton(onClick = { onOpenEditor(layout.id) }) {
-                            Text(layout.name, fontWeight = FontWeight.SemiBold)
+                        RadioButton(
+                            selected = layout.id == config.activeId,
+                            onClick = { onSave(config.copy(activeId = layout.id)) },
+                        )
+                        Column(Modifier.weight(1f).padding(vertical = 6.dp)) {
+                            Text(
+                                layout.name,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                "${layout.rows.size} rows · ${layout.rows.sumOf { it.keys.size }} keys" +
+                                    if (layout.id == config.activeId) " · active" else "",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                         Text(
-                            "${layout.rows.size} rows · ${layout.rows.sumOf { it.keys.size }} keys",
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(start = 12.dp),
+                            "Edit ›",
+                            fontSize = 13.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(end = 8.dp),
                         )
                     }
-                    TextButton(
-                        enabled = index > 0,
-                        onClick = { onSave(config.copy(layouts = config.layouts.swap(index, index - 1))) },
-                    ) { Text("↑") }
-                    TextButton(
-                        enabled = index < config.layouts.lastIndex,
-                        onClick = { onSave(config.copy(layouts = config.layouts.swap(index, index + 1))) },
-                    ) { Text("↓") }
-                    TextButton(onClick = {
-                        val copy = layout.copy(id = UUID.randomUUID().toString(), name = "${layout.name} copy")
-                        onSave(config.copy(layouts = config.layouts + copy))
-                    }) { Text("⧉") }
-                    TextButton(
-                        enabled = config.layouts.size > 1,
-                        onClick = {
+                    Row(
+                        Modifier.fillMaxWidth().padding(start = 44.dp, top = 2.dp, bottom = 2.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        SmallAction("↑", enabled = index > 0) {
+                            onSave(config.copy(layouts = config.layouts.swap(index, index - 1)))
+                        }
+                        SmallAction("↓", enabled = index < config.layouts.lastIndex) {
+                            onSave(config.copy(layouts = config.layouts.swap(index, index + 1)))
+                        }
+                        SmallAction("⧉") {
+                            val copy = layout.copy(
+                                id = UUID.randomUUID().toString(),
+                                name = "${layout.name} copy",
+                            )
+                            onSave(config.copy(layouts = config.layouts + copy))
+                        }
+                        SmallAction("🗑", enabled = config.layouts.size > 1) {
                             val remaining = config.layouts.filterNot { it.id == layout.id }
                             val active = if (config.activeId == layout.id) {
                                 remaining.first().id
                             } else config.activeId
                             onSave(config.copy(layouts = remaining, activeId = active))
-                        },
-                    ) { Text("🗑") }
+                        }
+                    }
                 }
             }
         }
@@ -131,7 +151,26 @@ fun LayoutsListScreen(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+/** Compact 36dp action chip — TextButton's minimum width would overflow the row. */
+@Composable
+private fun SmallAction(glyph: String, enabled: Boolean = true, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Box(
+        Modifier
+            .size(40.dp, 32.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (enabled) colors.surfaceVariant else colors.surfaceVariant.copy(alpha = 0.4f))
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            glyph,
+            fontSize = 14.sp,
+            color = if (enabled) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.4f),
+        )
+    }
+}
+
 @Composable
 fun LayoutEditorScreen(
     config: LayoutConfig,
@@ -159,7 +198,7 @@ fun LayoutEditorScreen(
     }
 
     Column(
-        modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+        modifier.verticalScroll(rememberScrollState()).padding(20.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         // Local buffer: driving the field straight from DataStore would
@@ -175,54 +214,59 @@ fun LayoutEditorScreen(
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = layout.shiftZalgo,
+                onCheckedChange = { update(layout.copy(shiftZalgo = it)) },
+            )
+            Column {
+                Text("Zalgo slider on the shift key", fontSize = 14.sp)
+                Text(
+                    "Hold ⇧ to set a sticky zalgo level for everything you type — " +
+                        "no per-key checkbox needed.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
         Text(
-            "Tap a key to edit it (output, hold-popup characters, similarity and " +
-                "zalgo options). Shift, backspace, and the bottom row are added " +
-                "automatically around your rows.",
+            "Tap any key in the preview to edit it. Greyed keys (shift, backspace, " +
+                "bottom row) are added automatically.",
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
+        LayoutPreview(
+            layout = layout,
+            selectedRow = editingRow,
+            selectedCol = editingCol,
+            onKeyTap = { r, c ->
+                editingRow = r
+                editingCol = c
+            },
+        )
+
         layout.rows.forEachIndexed { rowIndex, row ->
-            Card {
-                Column(Modifier.fillMaxWidth().padding(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            "Row ${rowIndex + 1}",
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f),
-                        )
-                        TextButton(onClick = {
-                            val keys = row.keys + CustomKey(output = "?")
-                            update(layout.replaceRow(rowIndex, CustomRow(keys)))
-                            editingRow = rowIndex
-                            editingCol = keys.lastIndex
-                        }) { Text("+ key") }
-                        TextButton(
-                            enabled = layout.rows.size > 1,
-                            onClick = {
-                                update(layout.copy(rows = layout.rows.filterIndexed { i, _ -> i != rowIndex }))
-                            },
-                        ) { Text("– row") }
-                    }
-                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        row.keys.forEachIndexed { keyIndex, key ->
-                            AssistChip(
-                                onClick = {
-                                    editingRow = rowIndex
-                                    editingCol = keyIndex
-                                },
-                                label = {
-                                    val marks = buildString {
-                                        if (key.variants.isNotEmpty()) append("·")
-                                        if (key.similar) append("≈")
-                                        if (key.zalgo) append("z̃")
-                                    }
-                                    Text(key.displayLabel + if (marks.isEmpty()) "" else " $marks")
-                                },
-                            )
-                        }
-                    }
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "Row ${rowIndex + 1} · ${row.keys.size} keys",
+                    fontSize = 13.sp,
+                    modifier = Modifier.weight(1f),
+                )
+                SmallAction("+ key") {
+                    val keys = row.keys + CustomKey(output = "?")
+                    update(layout.replaceRow(rowIndex, CustomRow(keys)))
+                    editingRow = rowIndex
+                    editingCol = keys.lastIndex
+                }
+                SmallAction("– row", enabled = layout.rows.size > 1) {
+                    update(layout.copy(rows = layout.rows.filterIndexed { i, _ -> i != rowIndex }))
                 }
             }
         }
@@ -270,6 +314,131 @@ fun LayoutEditorScreen(
     }
 }
 
+private const val PREVIEW_LOGICAL_WIDTH = 10f
+
+/**
+ * Interactive miniature of the layout: the user's rows plus greyed-out
+ * previews of the auto-added control skeleton. Tapping a key opens its
+ * editor dialog.
+ */
+@Composable
+private fun LayoutPreview(
+    layout: CustomLayout,
+    selectedRow: Int,
+    selectedCol: Int,
+    onKeyTap: (row: Int, col: Int) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(12.dp))
+            .background(colors.surfaceContainerHigh)
+            .padding(4.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        layout.rows.forEachIndexed { r, row ->
+            val isLast = r == layout.rows.lastIndex
+            Row(Modifier.fillMaxWidth().height(42.dp)) {
+                val rowWidth = row.keys.sumOf { it.width.toDouble() }.toFloat() +
+                    if (isLast) 3f else 0f
+                val side = (PREVIEW_LOGICAL_WIDTH - rowWidth) / 2f
+                if (side > 0f) Spacer(Modifier.weight(side))
+                if (isLast) GhostKey("⇧", 1.5f)
+                if (row.keys.isEmpty()) {
+                    Box(
+                        Modifier.weight(4f).padding(2.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text(
+                            "(empty row — use “+ key”)",
+                            fontSize = 11.sp,
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
+                }
+                row.keys.forEachIndexed { c, key ->
+                    PreviewKey(
+                        key = key,
+                        selected = r == selectedRow && c == selectedCol,
+                        modifier = Modifier.weight(key.width.coerceIn(0.5f, 4f)),
+                    ) { onKeyTap(r, c) }
+                }
+                if (isLast) GhostKey("⌫", 1.5f)
+                if (side > 0f) Spacer(Modifier.weight(side))
+            }
+        }
+        Row(Modifier.fillMaxWidth().height(42.dp)) {
+            GhostKey("?123", 1.5f)
+            GhostKey("🌐", 1f)
+            GhostKey("Ω", 1f)
+            GhostKey("", 4f)
+            GhostKey(".", 1f)
+            GhostKey("⏎", 1.5f)
+        }
+    }
+}
+
+@Composable
+private fun PreviewKey(
+    key: CustomKey,
+    selected: Boolean,
+    modifier: Modifier,
+    onTap: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val markers = buildString {
+        if (key.variants.isNotEmpty()) append("·")
+        if (key.similar) append("≈")
+        if (key.zalgo) append("z̃")
+    }
+    Box(
+        modifier
+            .fillMaxSize()
+            .padding(2.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(if (key.fnKey() != null) colors.surfaceVariant else colors.surface)
+            .then(
+                if (selected) Modifier.border(2.dp, colors.primary, RoundedCornerShape(6.dp))
+                else Modifier
+            )
+            .clickable(onClick = onTap),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            key.displayLabel,
+            fontSize = if (key.displayLabel.length > 2) 11.sp else 15.sp,
+            color = colors.onSurface,
+            maxLines = 1,
+        )
+        if (markers.isNotEmpty()) {
+            Text(
+                markers,
+                fontSize = 9.sp,
+                color = colors.primary,
+                modifier = Modifier.align(Alignment.TopEnd).padding(top = 1.dp, end = 3.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun androidx.compose.foundation.layout.RowScope.GhostKey(label: String, width: Float) {
+    val colors = MaterialTheme.colorScheme
+    Box(
+        Modifier
+            .weight(width)
+            .fillMaxSize()
+            .padding(2.dp)
+            .clip(RoundedCornerShape(6.dp))
+            .background(colors.surfaceVariant)
+            .alpha(0.45f),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(label, fontSize = 13.sp, color = colors.onSurfaceVariant, maxLines = 1)
+    }
+}
+
 @Composable
 private fun KeyEditDialog(
     key: CustomKey,
@@ -287,6 +456,11 @@ private fun KeyEditDialog(
     var similar by rememberSaveable(key) { mutableStateOf(key.similar) }
     var zalgo by rememberSaveable(key) { mutableStateOf(key.zalgo) }
     var letter by rememberSaveable(key) { mutableStateOf(key.letter) }
+    var fnName by rememberSaveable(key) { mutableStateOf(key.fn ?: "") }
+    var showFnPicker by rememberSaveable { mutableStateOf(false) }
+
+    val fnKey = FnKey.entries.firstOrNull { it.name == fnName }
+    val valid = output.isNotEmpty() || fnKey != null
 
     fun buildKey(): CustomKey = key.copy(
         output = output,
@@ -296,6 +470,7 @@ private fun KeyEditDialog(
         similar = similar,
         zalgo = zalgo,
         letter = letter,
+        fn = fnKey?.name,
     )
 
     AlertDialog(
@@ -306,43 +481,63 @@ private fun KeyEditDialog(
                 Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                OutlinedTextField(
-                    value = output,
-                    onValueChange = { output = it },
-                    label = { Text("Typed text") },
-                    singleLine = true,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Function", fontSize = 13.sp)
+                        Text(
+                            fnKey?.title ?: "None — types text",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(onClick = { showFnPicker = true }) { Text("Choose…") }
+                    if (fnKey != null) {
+                        TextButton(onClick = { fnName = "" }) { Text("Clear") }
+                    }
+                }
+                if (fnKey == null) {
+                    OutlinedTextField(
+                        value = output,
+                        onValueChange = { output = it },
+                        label = { Text("Typed text") },
+                        singleLine = true,
+                    )
+                }
                 OutlinedTextField(
                     value = label,
                     onValueChange = { label = it.take(6) },
-                    label = { Text("Label (empty = typed text)") },
+                    label = { Text(if (fnKey == null) "Label (empty = typed text)" else "Label (empty = ${fnKey.glyph})") },
                     singleLine = true,
                 )
-                OutlinedTextField(
-                    value = variantsText,
-                    onValueChange = { variantsText = it },
-                    label = { Text("Hold-popup characters") },
-                    supportingText = {
-                        Text("Each character is one option; separate with spaces for multi-character options.")
-                    },
-                )
+                if (fnKey == null) {
+                    OutlinedTextField(
+                        value = variantsText,
+                        onValueChange = { variantsText = it },
+                        label = { Text("Hold-popup characters") },
+                        supportingText = {
+                            Text("Each character is one option; separate with spaces for multi-character options.")
+                        },
+                    )
+                }
                 Text("Width: %.2f".format(width), fontSize = 13.sp)
                 Slider(
                     value = width,
                     onValueChange = { width = (it * 4).toInt() / 4f },
                     valueRange = 0.5f..3f,
                 )
-                CheckboxRow("Similar characters in hold popup", similar) { similar = it }
-                CheckboxRow("Zalgo slider in hold popup", zalgo) { zalgo = it }
-                CheckboxRow("Shift capitalizes this key", letter) { letter = it }
+                if (fnKey == null) {
+                    CheckboxRow("Similar characters in hold popup", similar) { similar = it }
+                    CheckboxRow("Zalgo slider in hold popup", zalgo) { zalgo = it }
+                    CheckboxRow("Shift capitalizes this key", letter) { letter = it }
+                }
                 HorizontalDivider()
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     TextButton(
-                        enabled = canMoveLeft && output.isNotEmpty(),
+                        enabled = canMoveLeft && valid,
                         onClick = { onMove(-1, buildKey()) },
                     ) { Text("◀ move") }
                     TextButton(
-                        enabled = canMoveRight && output.isNotEmpty(),
+                        enabled = canMoveRight && valid,
                         onClick = { onMove(1, buildKey()) },
                     ) { Text("move ▶") }
                     Spacer(Modifier.weight(1f))
@@ -352,10 +547,49 @@ private fun KeyEditDialog(
         },
         confirmButton = {
             TextButton(
-                enabled = output.isNotEmpty(),
+                enabled = valid,
                 onClick = { onSave(buildKey()) },
             ) { Text("Save") }
         },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+
+    if (showFnPicker) {
+        FnPickerDialog(
+            onPick = { picked ->
+                fnName = picked?.name ?: ""
+                showFnPicker = false
+            },
+            onDismiss = { showFnPicker = false },
+        )
+    }
+}
+
+@Composable
+private fun FnPickerDialog(onPick: (FnKey?) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("System function") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Row(
+                    Modifier.fillMaxWidth().clickable { onPick(null) }.padding(vertical = 10.dp),
+                ) {
+                    Text("None — types text", fontWeight = FontWeight.SemiBold)
+                }
+                HorizontalDivider()
+                FnKey.entries.forEach { fn ->
+                    Row(
+                        Modifier.fillMaxWidth().clickable { onPick(fn) }.padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(fn.glyph, fontSize = 16.sp, modifier = Modifier.width(52.dp))
+                        Text(fn.title, fontSize = 14.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {},
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
 }

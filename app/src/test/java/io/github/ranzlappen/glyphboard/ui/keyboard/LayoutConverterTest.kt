@@ -51,6 +51,45 @@ class LayoutConverterTest {
     }
 
     @Test
+    fun functionKeysConvertToFnActions() {
+        val layout = CustomLayout(
+            id = "f",
+            name = "Fns",
+            rows = listOf(
+                CustomRow(
+                    listOf(
+                        CustomKey(output = "", fn = "ArrowLeft"),
+                        CustomKey(output = "", fn = "Copy", label = "CP"),
+                        CustomKey(output = "", fn = "not-a-real-fn"),
+                        CustomKey(output = "x"),
+                    )
+                )
+            ),
+        )
+        val rows = LayoutConverter.toKeyRows(layout)
+        val keys = rows[0]
+        // shift + [arrow, copy, x] + backspace: the unknown fn with empty
+        // output is dropped entirely.
+        assertEquals(5, keys.size)
+        val arrow = keys[1]
+        assertEquals(io.github.ranzlappen.glyphboard.data.layouts.FnKey.ArrowLeft,
+            (arrow.action as KeyAction.Fn).key)
+        assertEquals("←", arrow.label)
+        val copy = keys[2]
+        assertEquals("CP", copy.label)
+        assertEquals(KeyAction.Text("x"), keys[3].action)
+    }
+
+    @Test
+    fun everyFnKeyNameRoundTripsThroughCustomKey() {
+        for (fn in io.github.ranzlappen.glyphboard.data.layouts.FnKey.entries) {
+            val key = CustomKey(output = "", fn = fn.name)
+            assertEquals(fn, key.fnKey())
+            assertEquals(fn.glyph, key.displayLabel)
+        }
+    }
+
+    @Test
     fun customFlagsSurviveConversion() {
         val layout = CustomLayout(
             id = "c",

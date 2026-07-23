@@ -37,6 +37,28 @@ class LayoutCodecTest {
     }
 
     @Test
+    fun fnAndShiftZalgoRoundTrip() {
+        val config = LayoutConfig(
+            layouts = listOf(
+                CustomLayout(
+                    id = "fx",
+                    name = "Fn",
+                    shiftZalgo = true,
+                    rows = listOf(CustomRow(listOf(CustomKey(output = "", fn = "Paste")))),
+                )
+            ),
+            activeId = "fx",
+        )
+        val decoded = LayoutCodec.decode(LayoutCodec.encode(config))!!
+        assertEquals(config, decoded)
+        assertTrue(decoded.layouts.first().shiftZalgo)
+        assertEquals(FnKey.Paste, decoded.layouts.first().rows.first().keys.first().fnKey())
+        // Old-format JSON (no fn/shiftZalgo fields) still decodes.
+        val legacy = """{"layouts":[{"id":"a","name":"L","rows":[{"keys":[{"output":"q"}]}]}],"activeId":"a"}"""
+        assertEquals("q", LayoutCodec.decode(legacy)!!.layouts.first().rows.first().keys.first().output)
+    }
+
+    @Test
     fun decodeRejectsGarbageAndEmpty() {
         assertNull(LayoutCodec.decode(""))
         assertNull(LayoutCodec.decode("   "))

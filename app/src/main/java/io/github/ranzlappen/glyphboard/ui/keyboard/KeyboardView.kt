@@ -36,6 +36,7 @@ import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import io.github.ranzlappen.glyphboard.data.layouts.FnKey
 import kotlin.math.abs
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -70,6 +71,13 @@ fun KeyboardPanel(
     popup: KeyPopupState? = null,
     spaceLabel: String? = null,
     onCycleLayout: ((Int) -> Unit)? = null,
+    /** Holding the shift key opens the zalgo slider (layout setting). */
+    shiftZalgoSlider: Boolean = false,
+    /** Small badge on the shift key (sticky zalgo level indicator). */
+    shiftBadge: String? = null,
+    /** Latched one-shot modifiers — their keys render highlighted. */
+    activeFnModifiers: Set<FnKey> = emptySet(),
+    onSetZalgoLevel: ((Int) -> Unit)? = null,
 ) {
     Column(modifier.fillMaxWidth().padding(horizontal = 3.dp, vertical = 4.dp)) {
         for (row in layout) {
@@ -87,6 +95,10 @@ fun KeyboardPanel(
                         popup = popup,
                         spaceLabel = spaceLabel,
                         onCycleLayout = onCycleLayout,
+                        shiftZalgoSlider = shiftZalgoSlider,
+                        shiftBadge = shiftBadge,
+                        activeFnModifiers = activeFnModifiers,
+                        onSetZalgoLevel = onSetZalgoLevel,
                         onAction = onAction,
                         modifier = Modifier.weight(key.width),
                     )
@@ -107,6 +119,10 @@ private fun KeyButton(
     popup: KeyPopupState?,
     spaceLabel: String?,
     onCycleLayout: ((Int) -> Unit)?,
+    shiftZalgoSlider: Boolean,
+    shiftBadge: String?,
+    activeFnModifiers: Set<FnKey>,
+    onSetZalgoLevel: ((Int) -> Unit)?,
     onAction: (KeyAction) -> Unit,
     modifier: Modifier,
 ) {
@@ -147,8 +163,11 @@ private fun KeyButton(
             addAll(seen)
         }
     }
-    val hasPopup = popup != null && baseOutput != null &&
-        (candidates.isNotEmpty() || key.zalgoSlider)
+    // Holding shift can open a zalgo-only slider (layout setting): the
+    // released level becomes the sticky zalgo intensity for all typing.
+    val isShiftZalgo = key.action == KeyAction.Shift && shiftZalgoSlider && onSetZalgoLevel != null
+    val hasPopup = popup != null && (isShiftZalgo || (baseOutput != null &&
+        (candidates.isNotEmpty() || key.zalgoSlider)))
 
     // The pointerInput block is keyed on the key only; every value it reads
     // must go through rememberUpdatedState or it would act on stale state
@@ -164,19 +183,25 @@ private fun KeyButton(
     val currentHaptics by rememberUpdatedState(haptics)
     val currentBounds by rememberUpdatedState(keyBounds)
     val currentCycle by rememberUpdatedState(onCycleLayout)
+    val currentSetZalgo by rememberUpdatedState(onSetZalgoLevel)
+    // The shared shift Key object is identical across layouts, so pointerInput
+    // does not restart when the shift-zalgo setting changes — read it fresh.
+    val currentIsShiftZalgo by rememberUpdatedState(isShiftZalgo)
 
     val colors = MaterialTheme.colorScheme
     val shiftEngaged = key.action == KeyAction.Shift && shift != ShiftState.Off
+    val fnModifierEngaged =
+        (key.action as? KeyAction.Fn)?.key?.let { it in activeFnModifiers } == true
     val background = when {
         pressed -> colors.primary.copy(alpha = 0.35f)
         key.style == KeyStyle.Accent -> colors.primary
-        shiftEngaged -> colors.primaryContainer
+        shiftEngaged || fnModifierEngaged -> colors.primaryContainer
         key.style == KeyStyle.Function -> colors.surfaceVariant
         else -> colors.surface
     }
     val foreground = when {
         key.style == KeyStyle.Accent && !pressed -> colors.onPrimary
-        shiftEngaged -> colors.onPrimaryContainer
+        shiftEngaged || fnModifierEngaged -> colors.onPrimaryContainer
         else -> colors.onSurface
     }
 
@@ -232,9 +257,9 @@ private fun KeyButton(
                                 delay(HOLD_DELAY_MS)
                                 popup?.open(
                                     owner = gestureToken,
-                                    candidates = currentCandidates,
-                                    zalgoEnabled = key.zalgoSlider,
-                                    baseText = currentBase.orEmpty(),
+                                    candidates = if (currentIsShiftZalgo) emptyList() else currentCandidates,
+                                    zalgoEnabled = currentIsShiftZalgo || key.zalgoSlider,
+                                    baseText = if (currentIsShiftZalgo) "a" else currentBase.orEmpty(),
                                     anchor = currentBounds,
                                     zalgoStepPx = zalgoStepPx,
                                 )
@@ -278,9 +303,16 @@ private fun KeyButton(
                         }
 
                         if (popupOpened) {
-                            val committed = popup?.commit(gestureToken)
-                            if (lifted && committed != null) {
-                                currentOnAction(KeyAction.Text(committed))
+                            if (currentIsShiftZalgo) {
+                                // The slider sets a sticky level; nothing is typed.
+                                val level = popup?.currentZalgoIntensity(gestureToken) ?: 0
+                                popup?.dismiss(gestureToken)
+                                if (lifted) currentSetZalgo?.invoke(level)
+                            } else {
+                                val committed = popup?.commit(gestureToken)
+                                if (lifted && committed != null) {
+                                    currentOnAction(KeyAction.Text(committed))
+                                }
                             }
                         } else if (lifted && !holdActionFired && !cycled && !key.repeatable) {
                             currentOnAction(currentAction)
@@ -311,11 +343,12 @@ private fun KeyButton(
                 color = foreground,
             )
         }
-        key.hint?.let {
+        val corner = if (key.action == KeyAction.Shift) shiftBadge else key.hint
+        corner?.let {
             Text(
                 text = it,
                 fontSize = 10.sp,
-                color = colors.onSurfaceVariant,
+                color = if (key.action == KeyAction.Shift) colors.primary else colors.onSurfaceVariant,
                 modifier = Modifier.align(Alignment.TopEnd).padding(top = 2.dp, end = 5.dp),
             )
         }

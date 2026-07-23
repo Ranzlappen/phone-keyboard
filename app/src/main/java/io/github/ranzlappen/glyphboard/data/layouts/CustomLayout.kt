@@ -17,7 +17,7 @@ import kotlinx.serialization.json.Json
 data class CustomKey(
     /** Text committed on tap (any string, including multi-code-point). */
     val output: String,
-    /** Display label; empty means "show [output]". */
+    /** Display label; empty means "show [output]" (or the function glyph). */
     val label: String = "",
     val width: Float = 1f,
     /** SwiftKey-style hold-popup variants, in popup order. */
@@ -28,8 +28,16 @@ data class CustomKey(
     val zalgo: Boolean = false,
     /** Shift-transformable (render/commit uppercase while shift is active). */
     val letter: Boolean = true,
+    /**
+     * [FnKey] name for system/function keys (arrows, F-keys, clipboard,
+     * media…). When set, [output] is ignored. Stored as a string so unknown
+     * values from newer app versions degrade gracefully.
+     */
+    val fn: String? = null,
 ) {
-    val displayLabel: String get() = label.ifEmpty { output }
+    fun fnKey(): FnKey? = fn?.let { name -> FnKey.entries.firstOrNull { it.name == name } }
+
+    val displayLabel: String get() = label.ifEmpty { fnKey()?.glyph ?: output }
 }
 
 @Serializable
@@ -40,6 +48,11 @@ data class CustomLayout(
     val id: String,
     val name: String,
     val rows: List<CustomRow> = emptyList(),
+    /**
+     * Holding the shift key opens the zalgo slider; the released level
+     * sticks and zalgo-fies everything typed until set back to zero.
+     */
+    val shiftZalgo: Boolean = false,
 )
 
 /** The whole persisted layout state: ordered list (= space-swipe cycle order) + active id. */

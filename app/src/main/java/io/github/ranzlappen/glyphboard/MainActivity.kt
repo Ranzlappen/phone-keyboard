@@ -1,6 +1,7 @@
 package io.github.ranzlappen.glyphboard
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
@@ -9,6 +10,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,10 +19,12 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -28,6 +32,8 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -75,9 +81,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         setContent {
             GlyphBoardTheme {
-                Scaffold { padding ->
-                    AppRoot(Modifier.padding(padding))
-                }
+                AppRoot()
             }
         }
         maybeShowPicker(intent)
@@ -112,15 +116,19 @@ private const val ROUTE_LAYOUTS = "layouts"
 private const val ROUTE_SIMILARITY = "similarity"
 private const val ROUTE_EDIT_PREFIX = "edit:"
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppRoot(modifier: Modifier = Modifier) {
+private fun AppRoot() {
     val context = LocalContext.current
     val app = context.applicationContext as GlyphBoardApp
     val scope = rememberCoroutineScope()
 
     var route by rememberSaveable { mutableStateOf(ROUTE_HOME) }
     val stack = route.split('|')
-    BackHandler(enabled = stack.size > 1) { route = route.substringBeforeLast('|') }
+    fun pop() {
+        route = route.substringBeforeLast('|')
+    }
+    BackHandler(enabled = stack.size > 1) { pop() }
     fun push(screen: String) {
         route = "$route|$screen"
     }
@@ -142,31 +150,63 @@ private fun AppRoot(modifier: Modifier = Modifier) {
     val similarityMap by app.similarity.map.collectAsState(initial = emptyMap())
 
     val screen = stack.last()
-    when {
-        screen == ROUTE_LAYOUTS -> LayoutsListScreen(
-            config = layoutConfig,
-            onSave = saveConfig,
-            onOpenEditor = { id -> push(ROUTE_EDIT_PREFIX + id) },
-            modifier = modifier,
-        )
-        screen.startsWith(ROUTE_EDIT_PREFIX) -> LayoutEditorScreen(
-            config = layoutConfig,
-            layoutId = screen.removePrefix(ROUTE_EDIT_PREFIX),
-            onSave = saveConfig,
-            onBack = { route = route.substringBeforeLast('|') },
-            modifier = modifier,
-        )
-        screen == ROUTE_SIMILARITY -> SimilarityScreen(
-            map = similarityMap,
-            onSetEntry = { base, variants -> scope.launch { app.similarity.setEntry(base, variants) } },
-            onReset = { scope.launch { app.similarity.resetToDefaults() } },
-            modifier = modifier,
-        )
-        else -> HomeScreen(
-            modifier = modifier,
-            onOpenLayouts = { push(ROUTE_LAYOUTS) },
-            onOpenSimilarity = { push(ROUTE_SIMILARITY) },
-        )
+    val title = when {
+        screen == ROUTE_LAYOUTS -> "Keyboard layouts"
+        screen.startsWith(ROUTE_EDIT_PREFIX) ->
+            layoutConfig.layouts.firstOrNull { it.id == screen.removePrefix(ROUTE_EDIT_PREFIX) }?.name
+                ?: "Edit layout"
+        screen == ROUTE_SIMILARITY -> "Similarity database"
+        else -> null
+    }
+
+    Scaffold(
+        topBar = {
+            if (title != null) {
+                TopAppBar(
+                    title = { Text(title) },
+                    navigationIcon = {
+                        TextButton(onClick = ::pop) { Text("←", fontSize = 20.sp) }
+                    },
+                )
+            }
+        },
+    ) { padding ->
+        // Cap content width so large screens/tablets don't stretch forms
+        // across the whole display.
+        Box(
+            Modifier.padding(padding).fillMaxSize(),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            val content = Modifier.widthIn(max = 640.dp).fillMaxSize()
+            when {
+                screen == ROUTE_LAYOUTS -> LayoutsListScreen(
+                    config = layoutConfig,
+                    onSave = saveConfig,
+                    onOpenEditor = { id -> push(ROUTE_EDIT_PREFIX + id) },
+                    modifier = content,
+                )
+                screen.startsWith(ROUTE_EDIT_PREFIX) -> LayoutEditorScreen(
+                    config = layoutConfig,
+                    layoutId = screen.removePrefix(ROUTE_EDIT_PREFIX),
+                    onSave = saveConfig,
+                    onBack = ::pop,
+                    modifier = content,
+                )
+                screen == ROUTE_SIMILARITY -> SimilarityScreen(
+                    map = similarityMap,
+                    onSetEntry = { base, variants ->
+                        scope.launch { app.similarity.setEntry(base, variants) }
+                    },
+                    onReset = { scope.launch { app.similarity.resetToDefaults() } },
+                    modifier = content,
+                )
+                else -> HomeScreen(
+                    modifier = content,
+                    onOpenLayouts = { push(ROUTE_LAYOUTS) },
+                    onOpenSimilarity = { push(ROUTE_SIMILARITY) },
+                )
+            }
+        }
     }
 }
 
@@ -268,14 +308,33 @@ private fun HomeScreen(
                 Text(
                     "Optional: enable the GlyphBoard quick-switch accessibility service " +
                         "to get a floating button that swaps keyboards from anywhere — one " +
-                        "tap to GlyphBoard, tap again for the keyboard picker. The service " +
-                        "cannot read the screen or your input.",
+                        "tap to GlyphBoard, tap again to hop back to your previous " +
+                        "keyboard. The service cannot read the screen or your input.",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 SetupStep(
                     done = quickSwitchEnabled,
-                    label = if (quickSwitchEnabled) "Quick switch is on" else "Quick switch is off",
+                    label = "1. On Android 13+, sideloaded apps must first be unblocked: " +
+                        "App info → ⋮ menu (top right) → “Allow restricted settings”. " +
+                        "Skip if the toggle isn't blocked.",
+                    buttonText = "Open app info",
+                ) {
+                    context.startActivity(
+                        Intent(
+                            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.fromParts("package", context.packageName, null),
+                        )
+                    )
+                }
+                SetupStep(
+                    done = quickSwitchEnabled,
+                    label = if (quickSwitchEnabled) {
+                        "2. Quick switch is on"
+                    } else {
+                        "2. Enable “GlyphBoard quick switch” under installed services / " +
+                            "downloaded apps, and turn on its shortcut button"
+                    },
                     buttonText = "Open accessibility settings",
                 ) {
                     context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
