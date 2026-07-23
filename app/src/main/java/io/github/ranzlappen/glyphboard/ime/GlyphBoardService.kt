@@ -1,7 +1,9 @@
 package io.github.ranzlappen.glyphboard.ime
 
 import android.inputmethodservice.InputMethodService
+import android.media.AudioManager
 import android.os.Build
+import android.os.SystemClock
 import android.text.InputType
 import android.view.KeyEvent
 import android.view.View
@@ -24,6 +26,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import io.github.ranzlappen.glyphboard.GlyphBoardApp
 import io.github.ranzlappen.glyphboard.data.layouts.DefaultLayouts
+import io.github.ranzlappen.glyphboard.data.layouts.FnKey
 import io.github.ranzlappen.glyphboard.data.layouts.LayoutStore
 import io.github.ranzlappen.glyphboard.data.prefs.SettingsRepository
 import io.github.ranzlappen.glyphboard.data.similarity.SimilarityStore
@@ -135,9 +138,12 @@ class GlyphBoardService :
                         ),
                         haptics = haptics,
                         layoutRows = layoutRows,
+                        layoutShiftZalgo = activeLayout.shiftZalgo,
                         spaceLabel = if (layoutConfig.layouts.size > 1) activeLayout.name else null,
                         similarity = similarityMap,
                         performAction = ::performAction,
+                        onFnKey = ::performFnKey,
+                        onModifiedChar = ::performModifiedChar,
                         onCycleLayout = ::cycleLayout,
                     )
                 }
@@ -239,5 +245,107 @@ class GlyphBoardService :
 
     private fun showPicker() {
         getSystemService(InputMethodManager::class.java)?.showInputMethodPicker()
+    }
+
+    // ── Function keys ────────────────────────────────────────────────────
+
+    /**
+     * Executes a semantic [FnKey]. Ctrl/Alt/CapsLock never reach here (they
+     * are modifier state in the UI layer); everything else maps to editor
+     * context-menu actions, media/volume calls, or key events carrying the
+     * requested meta state (shift meta = arrow selection, ctrl meta = word
+     * jumps in editors that support it).
+     */
+    private fun performFnKey(fn: FnKey, ctrl: Boolean, alt: Boolean, shiftMeta: Boolean) {
+        val ic = currentInputConnection
+        when (fn) {
+            FnKey.Copy -> ic?.performContextMenuAction(android.R.id.copy)
+            FnKey.Cut -> ic?.performContextMenuAction(android.R.id.cut)
+            FnKey.Paste -> ic?.performContextMenuAction(android.R.id.paste)
+            FnKey.SelectAll -> ic?.performContextMenuAction(android.R.id.selectAll)
+            FnKey.PlayPause -> dispatchMediaKey(KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE)
+            FnKey.MediaNext -> dispatchMediaKey(KeyEvent.KEYCODE_MEDIA_NEXT)
+            FnKey.MediaPrev -> dispatchMediaKey(KeyEvent.KEYCODE_MEDIA_PREVIOUS)
+            FnKey.VolumeUp -> adjustVolume(AudioManager.ADJUST_RAISE)
+            FnKey.VolumeDown -> adjustVolume(AudioManager.ADJUST_LOWER)
+            FnKey.Mute -> adjustVolume(AudioManager.ADJUST_TOGGLE_MUTE)
+            FnKey.Ctrl, FnKey.Alt, FnKey.CapsLock -> Unit
+            else -> fnKeyCode(fn)?.let { sendKeyWithMeta(it, metaState(ctrl, alt, shiftMeta)) }
+        }
+    }
+
+    /**
+     * Ctrl/Alt + character: sent as a real key event (Ctrl+C, Ctrl+Z, Alt+…)
+     * when the character has a keycode; otherwise the modifiers are dropped
+     * and the text commits normally.
+     */
+    private fun performModifiedChar(text: String, ctrl: Boolean, alt: Boolean) {
+        val code = text.singleOrNull()?.lowercaseChar()?.let { charKeyCode(it) }
+        if (code != null) {
+            sendKeyWithMeta(code, metaState(ctrl, alt, shiftMeta = false))
+        } else {
+            currentInputConnection?.commitText(text, 1)
+        }
+    }
+
+    private fun fnKeyCode(fn: FnKey): Int? = when (fn) {
+        FnKey.ArrowLeft -> KeyEvent.KEYCODE_DPAD_LEFT
+        FnKey.ArrowRight -> KeyEvent.KEYCODE_DPAD_RIGHT
+        FnKey.ArrowUp -> KeyEvent.KEYCODE_DPAD_UP
+        FnKey.ArrowDown -> KeyEvent.KEYCODE_DPAD_DOWN
+        FnKey.Home -> KeyEvent.KEYCODE_MOVE_HOME
+        FnKey.End -> KeyEvent.KEYCODE_MOVE_END
+        FnKey.PageUp -> KeyEvent.KEYCODE_PAGE_UP
+        FnKey.PageDown -> KeyEvent.KEYCODE_PAGE_DOWN
+        FnKey.Tab -> KeyEvent.KEYCODE_TAB
+        FnKey.Esc -> KeyEvent.KEYCODE_ESCAPE
+        FnKey.ForwardDelete -> KeyEvent.KEYCODE_FORWARD_DEL
+        FnKey.Insert -> KeyEvent.KEYCODE_INSERT
+        FnKey.F1 -> KeyEvent.KEYCODE_F1
+        FnKey.F2 -> KeyEvent.KEYCODE_F2
+        FnKey.F3 -> KeyEvent.KEYCODE_F3
+        FnKey.F4 -> KeyEvent.KEYCODE_F4
+        FnKey.F5 -> KeyEvent.KEYCODE_F5
+        FnKey.F6 -> KeyEvent.KEYCODE_F6
+        FnKey.F7 -> KeyEvent.KEYCODE_F7
+        FnKey.F8 -> KeyEvent.KEYCODE_F8
+        FnKey.F9 -> KeyEvent.KEYCODE_F9
+        FnKey.F10 -> KeyEvent.KEYCODE_F10
+        FnKey.F11 -> KeyEvent.KEYCODE_F11
+        FnKey.F12 -> KeyEvent.KEYCODE_F12
+        else -> null
+    }
+
+    private fun charKeyCode(c: Char): Int? = when (c) {
+        in 'a'..'z' -> KeyEvent.KEYCODE_A + (c - 'a')
+        in '0'..'9' -> KeyEvent.KEYCODE_0 + (c - '0')
+        ' ' -> KeyEvent.KEYCODE_SPACE
+        else -> null
+    }
+
+    private fun metaState(ctrl: Boolean, alt: Boolean, shiftMeta: Boolean): Int {
+        var meta = 0
+        if (ctrl) meta = meta or KeyEvent.META_CTRL_ON or KeyEvent.META_CTRL_LEFT_ON
+        if (alt) meta = meta or KeyEvent.META_ALT_ON or KeyEvent.META_ALT_LEFT_ON
+        if (shiftMeta) meta = meta or KeyEvent.META_SHIFT_ON or KeyEvent.META_SHIFT_LEFT_ON
+        return meta
+    }
+
+    private fun sendKeyWithMeta(keyCode: Int, meta: Int) {
+        val ic = currentInputConnection ?: return
+        val now = SystemClock.uptimeMillis()
+        ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_DOWN, keyCode, 0, meta))
+        ic.sendKeyEvent(KeyEvent(now, now, KeyEvent.ACTION_UP, keyCode, 0, meta))
+    }
+
+    private fun dispatchMediaKey(keyCode: Int) {
+        val audio = getSystemService(AudioManager::class.java) ?: return
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_DOWN, keyCode))
+        audio.dispatchMediaKeyEvent(KeyEvent(KeyEvent.ACTION_UP, keyCode))
+    }
+
+    private fun adjustVolume(direction: Int) {
+        getSystemService(AudioManager::class.java)
+            ?.adjustStreamVolume(AudioManager.STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI)
     }
 }

@@ -13,7 +13,7 @@ object LayoutConverter {
 
     fun toKeyRows(layout: CustomLayout): List<List<Key>> {
         val charRows = layout.rows
-            .map { row -> row.keys.filter { it.output.isNotEmpty() } }
+            .map { row -> row.keys.filter { it.output.isNotEmpty() || it.fnKey() != null } }
             .filter { it.isNotEmpty() }
             .map { row -> row.map { it.toKey() } }
         if (charRows.isEmpty()) {
@@ -27,14 +27,25 @@ object LayoutConverter {
         return rows
     }
 
-    private fun CustomKey.toKey(): Key = Key(
-        label = displayLabel,
-        action = KeyAction.Text(output),
-        width = width.coerceIn(0.5f, 4f),
-        hint = variants.firstOrNull()?.takeIf { it.length <= 2 },
-        isLetter = letter && output.length <= 2,
-        holdVariants = variants,
-        includeSimilar = similar,
-        zalgoSlider = zalgo,
-    )
+    private fun CustomKey.toKey(): Key {
+        val fnKey = fnKey()
+        if (fnKey != null) {
+            return Key(
+                label = displayLabel,
+                action = KeyAction.Fn(fnKey),
+                width = width.coerceIn(0.5f, 4f),
+                style = KeyStyle.Function,
+            )
+        }
+        return Key(
+            label = displayLabel,
+            action = KeyAction.Text(output),
+            width = width.coerceIn(0.5f, 4f),
+            hint = variants.firstOrNull()?.takeIf { it.length <= 2 },
+            isLetter = letter && output.length <= 2,
+            holdVariants = variants,
+            includeSimilar = similar,
+            zalgoSlider = zalgo,
+        )
+    }
 }

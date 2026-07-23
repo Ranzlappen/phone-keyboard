@@ -1,16 +1,15 @@
 package io.github.ranzlappen.glyphboard.ui.keyboard
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -37,11 +36,12 @@ import kotlin.math.roundToInt
 import kotlin.random.Random
 
 /**
- * Shared state for the SwiftKey-style hold popup: a horizontal candidate row
- * (slide to select, release to commit) plus an optional vertical zalgo
- * intensity slider as the last cell. One instance serves the whole keyboard —
- * only the key that opened it drives it. All geometry is in root (ComposeView)
- * coordinates so key-local pointer positions can be mapped onto popup cells.
+ * Shared state for the SwiftKey-style hold popup: a candidate grid (slide to
+ * select, release to commit — wrapping onto multiple rows when a key has many
+ * options) plus an optional vertical zalgo intensity slider as the last cell.
+ * One instance serves the whole keyboard — only the key that opened it drives
+ * it. All geometry is in root (ComposeView) coordinates so key-local pointer
+ * positions can be mapped onto popup cells.
  */
 class KeyPopupState {
 
@@ -74,9 +74,13 @@ class KeyPopupState {
 
     // Reported back by the overlay after layout, in root coordinates.
     var rowLeftInRoot = 0f
+    var popupTopInRoot = 0f
     var cellWidthPx = 1f
+    var cellHeightPx = 1f
+    var columns = 1
 
     val cellCount: Int get() = candidates.size + if (zalgoEnabled) 1 else 0
+    val rowCount: Int get() = if (columns <= 0) 1 else (cellCount + columns - 1) / columns
     val zalgoCellIndex: Int get() = if (zalgoEnabled) candidates.size else -1
     val inZalgoMode: Boolean get() = zalgoEnabled && selectedIndex == zalgoCellIndex
 
@@ -114,13 +118,31 @@ class KeyPopupState {
         // Ignore drags until the overlay has laid out; the previous popup's
         // geometry would map positions onto the wrong cells.
         if (!visible || !laidOut || cellCount == 0) return
-        selectedIndex = ((position.x - rowLeftInRoot) / cellWidthPx)
+        val col = ((position.x - rowLeftInRoot) / cellWidthPx)
             .toInt()
-            .coerceIn(0, cellCount - 1)
+            .coerceIn(0, columns - 1)
         if (inZalgoMode) {
-            zalgoIntensity = ((anchor.top - position.y) / zalgoStepPx)
+            // Vertical movement adjusts intensity; only sliding sideways out
+            // of the zalgo column leaves the slider.
+            val zalgoCol = zalgoCellIndex % columns
+            if (col == zalgoCol) {
+                zalgoIntensity = ((anchor.top - position.y) / zalgoStepPx)
+                    .toInt()
+                    .coerceIn(0, Zalgo.MAX_INTENSITY)
+            } else {
+                val zalgoRow = zalgoCellIndex / columns
+                selectedIndex = (zalgoRow * columns + col).coerceIn(0, cellCount - 1)
+            }
+        } else {
+            val row = ((position.y - popupTopInRoot) / cellHeightPx)
                 .toInt()
-                .coerceIn(0, Zalgo.MAX_INTENSITY)
+                .coerceIn(0, rowCount - 1)
+            selectedIndex = (row * columns + col).coerceIn(0, cellCount - 1)
+            if (inZalgoMode) {
+                zalgoIntensity = ((anchor.top - position.y) / zalgoStepPx)
+                    .toInt()
+                    .coerceIn(0, Zalgo.MAX_INTENSITY)
+            }
         }
     }
 
@@ -136,6 +158,10 @@ class KeyPopupState {
         close()
         return result
     }
+
+    /** The current slider level, for callers that consume intensity rather than text. */
+    fun currentZalgoIntensity(owner: Any): Int =
+        if (owner === this.owner && visible) zalgoIntensity else 0
 
     /** Closes the popup if [owner] still drives it (safe in cleanup paths). */
     fun dismiss(owner: Any) {
@@ -159,9 +185,11 @@ private val MAX_CELL_WIDTH = 46.dp
 private val TRACK_HEIGHT = 140.dp
 
 /**
- * Draws the popup for [state]. Must fill exactly the keyboard-panel area it
- * overlays; it never consumes pointer input (the pressed key keeps pointer
- * capture and forwards drag positions into [KeyPopupState.drag]).
+ * Draws the popup for [state]. Pass `Modifier.matchParentSize()` from the Box
+ * wrapping the keyboard panel — NEVER a size-dictating modifier: this overlay
+ * must adopt the keyboard's size, not inflate the IME window. It never
+ * consumes pointer input (the pressed key keeps pointer capture and forwards
+ * drag positions into [KeyPopupState.drag]).
  */
 @Composable
 fun KeyPopupOverlay(state: KeyPopupState, modifier: Modifier = Modifier) {
@@ -173,9 +201,7 @@ fun KeyPopupOverlay(state: KeyPopupState, modifier: Modifier = Modifier) {
     var origin by remember { mutableStateOf<Offset?>(null) }
 
     BoxWithConstraints(
-        modifier
-            .fillMaxSize()
-            .onGloballyPositioned { origin = it.positionInRoot() },
+        modifier.onGloballyPositioned { origin = it.positionInRoot() },
     ) {
         val overlayOrigin = origin
         if (!state.visible || state.cellCount == 0 || overlayOrigin == null) {
@@ -183,28 +209,38 @@ fun KeyPopupOverlay(state: KeyPopupState, modifier: Modifier = Modifier) {
         }
         val panelW = constraints.maxWidth.toFloat()
         val marginPx = with(density) { 8.dp.toPx() }
-        val rowHpx = with(density) { CELL_HEIGHT.toPx() }
+        val cellHpx = with(density) { CELL_HEIGHT.toPx() }
         val gapPx = with(density) { 6.dp.toPx() }
-        val cellWpx = minOf(
-            with(density) { MAX_CELL_WIDTH.toPx() },
-            (panelW - 2 * marginPx) / state.cellCount,
-        )
-        val rowWpx = cellWpx * state.cellCount
+        val maxCellWpx = with(density) { MAX_CELL_WIDTH.toPx() }
+
+        // Grid shape: as many preferred-width cells per row as fit; overflow
+        // wraps onto additional rows instead of shrinking cells forever.
+        val perRow = ((panelW - 2 * marginPx) / maxCellWpx).toInt()
+            .coerceAtLeast(1)
+            .coerceAtMost(state.cellCount)
+        val cellWpx = minOf(maxCellWpx, (panelW - 2 * marginPx) / perRow)
+        val rows = (state.cellCount + perRow - 1) / perRow
+        val gridWpx = cellWpx * minOf(perRow, state.cellCount)
+        val gridHpx = cellHpx * rows
 
         val anchorLocal = state.anchor.translate(-overlayOrigin)
-        val left = (anchorLocal.center.x - rowWpx / 2f)
-            .coerceIn(marginPx, (panelW - marginPx - rowWpx).coerceAtLeast(marginPx))
-        val top = (anchorLocal.top - rowHpx - gapPx).coerceAtLeast(marginPx)
+        val left = (anchorLocal.center.x - gridWpx / 2f)
+            .coerceIn(marginPx, (panelW - marginPx - gridWpx).coerceAtLeast(marginPx))
+        val top = (anchorLocal.top - gridHpx - gapPx).coerceAtLeast(marginPx)
 
         // Geometry the pressed key needs to map drag positions onto cells.
         state.rowLeftInRoot = left + overlayOrigin.x
+        state.popupTopInRoot = top + overlayOrigin.y
         state.cellWidthPx = cellWpx
+        state.cellHeightPx = cellHpx
+        state.columns = perRow
         state.laidOut = true
 
         val cellW = with(density) { cellWpx.toDp() }
 
         if (state.inZalgoMode) {
-            val trackLeft = (left + state.zalgoCellIndex * cellWpx).roundToInt()
+            val zalgoCol = state.zalgoCellIndex % perRow
+            val trackLeft = (left + zalgoCol * cellWpx).roundToInt()
             val trackTop = (top - with(density) { TRACK_HEIGHT.toPx() } - gapPx)
                 .coerceAtLeast(0f)
                 .roundToInt()
@@ -241,20 +277,25 @@ fun KeyPopupOverlay(state: KeyPopupState, modifier: Modifier = Modifier) {
             color = colors.surfaceContainerLowest,
             shadowElevation = 6.dp,
         ) {
-            Row {
-                state.candidates.forEachIndexed { i, candidate ->
-                    PopupCell(
-                        text = candidate,
-                        selected = i == state.selectedIndex,
-                        width = cellW,
-                    )
-                }
-                if (state.zalgoEnabled) {
-                    PopupCell(
-                        text = if (state.inZalgoMode) state.zalgoPreview else "z̴",
-                        selected = state.inZalgoMode,
-                        width = cellW,
-                    )
+            val cells = state.cellCount
+            Column {
+                for (r in 0 until rows) {
+                    Row {
+                        for (c in 0 until perRow) {
+                            val i = r * perRow + c
+                            if (i >= cells) break
+                            val isZalgoCell = state.zalgoEnabled && i == state.zalgoCellIndex
+                            PopupCell(
+                                text = when {
+                                    isZalgoCell && state.inZalgoMode -> state.zalgoPreview
+                                    isZalgoCell -> "z̴"
+                                    else -> state.candidates[i]
+                                },
+                                selected = i == state.selectedIndex,
+                                width = cellW,
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -269,7 +310,7 @@ private fun PopupCell(text: String, selected: Boolean, width: androidx.compose.u
             .size(width, CELL_HEIGHT)
             .clip(RoundedCornerShape(8.dp))
             .background(if (selected) colors.primary else colors.surfaceContainerLowest),
-        verticalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+        verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Text(

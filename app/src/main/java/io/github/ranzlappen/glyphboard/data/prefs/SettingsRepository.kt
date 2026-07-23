@@ -20,6 +20,7 @@ class SettingsRepository(private val context: Context) {
         val RECENTS = stringPreferencesKey("recent_characters")
         val PINNED_CHARS = stringPreferencesKey("pinned_characters")
         val PINNED_BLOCKS = stringPreferencesKey("pinned_blocks")
+        val LAST_OTHER_IME = stringPreferencesKey("last_other_ime")
     }
 
     val hapticsEnabled: Flow<Boolean> =
@@ -38,6 +39,10 @@ class SettingsRepository(private val context: Context) {
     /** Pinned Unicode block names, in pin order. */
     val pinnedBlocks: Flow<List<String>> =
         context.glyphDataStore.data.map { PinnedBlocks.decode(it[Keys.PINNED_BLOCKS] ?: "") }
+
+    /** IME id the quick-switch button last switched away from (toggle target). */
+    val lastOtherIme: Flow<String?> =
+        context.glyphDataStore.data.map { it[Keys.LAST_OTHER_IME] }
 
     suspend fun setHapticsEnabled(value: Boolean) {
         context.glyphDataStore.edit { it[Keys.HAPTICS] = value }
@@ -60,6 +65,10 @@ class SettingsRepository(private val context: Context) {
             val next = if (cp in current) current - cp else current + cp
             prefs[Keys.PINNED_CHARS] = RecentCharacters.encode(next)
         }
+    }
+
+    suspend fun setLastOtherIme(imeId: String) {
+        context.glyphDataStore.edit { it[Keys.LAST_OTHER_IME] = imeId }
     }
 
     /** Adds [blockName] to the pinned blocks, or removes it when already pinned. */
