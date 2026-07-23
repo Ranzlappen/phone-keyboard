@@ -44,6 +44,10 @@ captures/
 # Keystore files
 *.jks
 *.keystore
+# Exception: the intentionally-public CI fallback keystore (see CLAUDE.md).
+!signing/fallback.keystore
+# Local signing config written by CI / developers; never commit real credentials.
+keystore.properties
 
 # External native build folder generated in Android Studio 2.2 and later
 .externalNativeBuild

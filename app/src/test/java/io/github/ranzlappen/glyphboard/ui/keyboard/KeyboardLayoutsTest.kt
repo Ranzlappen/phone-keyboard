@@ -1,5 +1,6 @@
 package io.github.ranzlappen.glyphboard.ui.keyboard
 
+import io.github.ranzlappen.glyphboard.data.layouts.DefaultLayouts
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -7,7 +8,7 @@ import org.junit.Test
 class KeyboardLayoutsTest {
 
     private val typingLayouts = mapOf(
-        "alpha" to KeyboardLayouts.alpha,
+        "alpha" to LayoutConverter.toKeyRows(DefaultLayouts.qwerty()),
         "symbols" to KeyboardLayouts.symbols,
         "symbolsAlt" to KeyboardLayouts.symbolsAlt,
     )
@@ -46,7 +47,7 @@ class KeyboardLayoutsTest {
 
     @Test
     fun letterKeysAreLowercaseSingleChars() {
-        val letters = KeyboardLayouts.alpha.flatten().filter { it.isLetter }
+        val letters = typingLayouts.getValue("alpha").flatten().filter { it.isLetter }
         assertEquals(26, letters.size)
         for (key in letters) {
             assertEquals(1, key.label.length)

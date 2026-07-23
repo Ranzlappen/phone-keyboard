@@ -6,6 +6,7 @@ plugins {
     // Kotlin support is built into AGP 9.0+, so the standalone
     // org.jetbrains.kotlin.android plugin is not applied.
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 val keystorePropertiesFile = rootProject.file("keystore.properties")
@@ -34,6 +35,17 @@ android {
     }
 
     signingConfigs {
+        // Committed, intentionally-public keystore (password "glyphboard").
+        // Provides NO security — it exists so every CI run and every dev
+        // machine produces the same signature, keeping in-place updates
+        // working for debug builds and for releases made before a real
+        // keystore is configured.
+        create("fallback") {
+            storeFile = rootProject.file("signing/fallback.keystore")
+            storePassword = "glyphboard"
+            keyAlias = "glyphboard"
+            keyPassword = "glyphboard"
+        }
         create("release") {
             if (keystoreProperties.isNotEmpty()) {
                 storeFile = file(keystoreProperties.getProperty("storeFile"))
@@ -52,6 +64,7 @@ android {
             // app (each shows up as its own keyboard in system settings).
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            signingConfig = signingConfigs.getByName("fallback")
         }
         release {
             isMinifyEnabled = true
@@ -60,10 +73,13 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            // Only attach release signing if a keystore.properties was supplied
-            // (CI writes one; PR builds without secrets get an unsigned build).
-            if (keystoreProperties.isNotEmpty()) {
-                signingConfig = signingConfigs.getByName("release")
+            // Real signing when keystore.properties was supplied (CI writes
+            // one from secrets); otherwise the public fallback keystore so
+            // the release APK is still installable from every CI run.
+            signingConfig = if (keystoreProperties.isNotEmpty()) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("fallback")
             }
         }
     }
@@ -112,6 +128,7 @@ dependencies {
 
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.serialization.json)
 
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)

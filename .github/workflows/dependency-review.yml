@@ -1,0 +1,43 @@
+# Dependency review on every PR to main.
+#
+# Fails the PR if a dependency change introduces a vulnerability at or above
+# `fail-on-severity`, and comments a diff summary on the PR. Pairs with
+# security-scan.yml: this is the per-PR gate, that is the deeper sweep.
+#
+# Consumes the GitHub Dependency Graph. If the graph is disabled the action
+# hard-errors ("Dependency review is not supported on this repository"), so
+# the step is marked continue-on-error to keep PRs unblocked. Enable it under
+# Settings -> Advanced Security -> Dependency graph, then remove the
+# continue-on-error line below to turn this back into a hard merge gate.
+
+name: Dependency review
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+  # Allow the action to comment the dependency diff on the PR.
+  pull-requests: write
+
+concurrency:
+  group: dependency-review-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run dependency-review
+        uses: actions/dependency-review-action@v4
+        with:
+          # Block PRs that introduce high or critical CVEs.
+          fail-on-severity: high
+          # Keep clean PRs uncluttered; only comment when something is flagged.
+          comment-summary-in-pr: on-failure

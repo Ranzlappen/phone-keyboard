@@ -15,4 +15,7 @@ class ImeUiState {
     var editorInfo by mutableStateOf<EditorInfo?>(null)
     var mode by mutableStateOf(KeyboardMode.Alpha)
     var shift by mutableStateOf(ShiftState.Off)
+
+    /** Layout name flashed over the keyboard after a space-bar swipe switch. */
+    var layoutToast by mutableStateOf<String?>(null)
 }

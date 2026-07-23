@@ -1,0 +1,127 @@
+# Security scans: CodeQL static analysis + gitleaks secret scan + OpenSSF Scorecard.
+#
+# Runs on:
+#   - Every PR (catch issues before merge).
+#   - Every push to main (catch issues that bypassed PR review).
+#   - Weekly schedule (catch issues from newly-disclosed CVEs).
+#
+# CodeQL analyzes Kotlin in build-mode: manual — it compiles the app with
+# Gradle (the same assembleDebug the CI workflow runs) so the extractor sees
+# real bytecode. build-mode: none proved unreliable for this Android/Kotlin
+# project (the extractor fell back to autobuild and saw no source).
+
+name: Security scan
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  schedule:
+    # Weekly Mondays 06:00 UTC.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+  # Re-score with OpenSSF Scorecard when branch protection changes.
+  branch_protection_rule:
+
+permissions:
+  # Workflow scope stays read-only; jobs below opt into the writes they need.
+  # The Scorecard signing server rejects results from a workflow that holds
+  # any write scope at workflow level, so do not add writes here.
+  contents: read
+
+concurrency:
+  # PR runs cancel in progress; main and schedule runs queue to avoid races.
+  group: security-scan-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  codeql:
+    name: CodeQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # Required to upload SARIF results to the Security tab.
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platforms;android-36 build-tools;36.0.0"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: true
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: java-kotlin
+          build-mode: manual
+          queries: security-extended
+
+      - name: Build for analysis
+        run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: '/language:java-kotlin'
+
+  gitleaks:
+    name: Gitleaks secret scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          # Full history so gitleaks scans past commits, not just the diff.
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  scorecard:
+    name: OpenSSF Scorecard
+    # Meaningful weekly and on real config changes, not on every code edit.
+    if: ${{ github.event_name == 'schedule' || github.event_name == 'branch_protection_rule' || github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      security-events: write
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Run analysis
+        uses: ossf/scorecard-action@v2
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          # Public repo: publish so the score badge works.
+          publish_results: true
+
+      - name: Upload SARIF results
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: ossf-scorecard

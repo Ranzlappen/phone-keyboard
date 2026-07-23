@@ -133,7 +133,7 @@ jobs:
             echo "Release signing enabled."
           else
             echo "signing=false" >> "$GITHUB_OUTPUT"
-            echo "Release signing secrets missing; release artifacts will be unsigned."
+            echo "Release signing secrets missing; falling back to the committed public keystore."
           fi
 
       - name: Lint (debug)
@@ -156,8 +156,10 @@ jobs:
           -PversionName=${{ steps.version.outputs.version_name }}
           -PversionCode=${{ steps.version.outputs.version_code }}
 
-      - name: Assemble release APK (only when signing is configured)
-        if: steps.keystore.outputs.signing == 'true'
+      - name: Assemble release APK
+        # Always built: with secrets it is properly signed; without them it is
+        # signed by the committed public fallback keystore, so every GitHub
+        # Release carries an installable release-variant APK either way.
         run: ./gradlew assembleRelease --stacktrace --no-daemon
           -PversionName=${{ steps.version.outputs.version_name }}
           -PversionCode=${{ steps.version.outputs.version_code }}
@@ -179,12 +181,11 @@ jobs:
           retention-days: 30
 
       - name: Upload release APK
-        if: steps.keystore.outputs.signing == 'true'
         uses: actions/upload-artifact@v7
         with:
           name: glyphboard-release-apk
           path: app/build/outputs/apk/release/*.apk
-          if-no-files-found: warn
+          if-no-files-found: error
           retention-days: 30
 
       - name: Upload lint report
@@ -237,9 +238,8 @@ jobs:
           name: glyphboard-release-aab
           path: dist/
 
-      - name: Download release APK (if present)
+      - name: Download release APK
         uses: actions/download-artifact@v8
-        continue-on-error: true
         with:
           name: glyphboard-release-apk
           path: dist/

@@ -5,9 +5,9 @@ import android.content.ClipboardManager
 import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -50,6 +50,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.ranzlappen.glyphboard.data.unicode.CharGridItem
+import io.github.ranzlappen.glyphboard.data.unicode.UnicodeBlockInfo
 import io.github.ranzlappen.glyphboard.data.unicode.UnicodeCatalog
 import io.github.ranzlappen.glyphboard.data.unicode.UnicodeSearch
 import io.github.ranzlappen.glyphboard.ui.keyboard.KeyAction
@@ -67,17 +68,31 @@ sealed interface CatalogUiState {
     data class Ready(val catalog: UnicodeCatalog) : CatalogUiState
 }
 
+/** Live lists the browser renders alongside the catalog. */
+data class BrowserData(
+    val recents: List<Int> = emptyList(),
+    val pinnedChars: List<Int> = emptyList(),
+    val pinnedBlocks: List<String> = emptyList(),
+)
+
+data class BrowserCallbacks(
+    val onInsert: (Int) -> Unit,
+    val onTogglePinChar: (Int) -> Unit,
+    val onTogglePinBlock: (String) -> Unit,
+)
+
 /**
  * The charmap: one continuous scrollable grid of every assigned Unicode
- * character, subdivided by block, with a jump index, name/code point search,
- * recents, and a long-press detail card.
+ * character, subdivided by block, with pinned characters above Recents,
+ * pinned blocks right below, a jump index, name/code point search, and a
+ * long-press detail card.
  */
 @Composable
 fun UnicodeBrowserPanel(
     catalogState: CatalogUiState,
-    recents: List<Int>,
+    data: BrowserData,
+    callbacks: BrowserCallbacks,
     haptics: Boolean,
-    onInsert: (Int) -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -87,12 +102,18 @@ fun UnicodeBrowserPanel(
     var detailCp by remember { mutableStateOf<Int?>(null) }
     val gridState = rememberLazyGridState()
     val scope = rememberCoroutineScope()
+    val view = LocalView.current
     val colors = MaterialTheme.colorScheme
 
-    // Snapshot recents at open so the grid doesn't shift under the finger
-    // every time an insert updates the list.
-    val recentsSnapshot = remember { recents }
-    val recentsItemCount = if (recentsSnapshot.isEmpty()) 0 else recentsSnapshot.size + 1
+    // Snapshot recents at open so inserts don't shift the grid mid-browse.
+    // Pinned lists stay live: pinning is a deliberate act whose feedback is
+    // the section appearing/disappearing.
+    val recentsSnapshot = remember { data.recents }
+
+    fun pinBlockWithHaptic(name: String) {
+        if (haptics) view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+        callbacks.onTogglePinBlock(name)
+    }
 
     Box(modifier.fillMaxWidth().height(if (searchOpen) 468.dp else 316.dp)) {
         Column(Modifier.fillMaxSize()) {
@@ -113,22 +134,68 @@ fun UnicodeBrowserPanel(
                         catalog = (catalogState as CatalogUiState.Ready).catalog,
                         query = query,
                         haptics = haptics,
-                        onInsert = onInsert,
+                        onInsert = callbacks.onInsert,
                         onLongPress = { detailCp = it },
                     )
                     else -> {
                         val catalog = (catalogState as CatalogUiState.Ready).catalog
+
+                        val pinnedSections = remember(catalog, data.pinnedBlocks) {
+                            data.pinnedBlocks
+                                .mapNotNull { name -> catalog.blocks.firstOrNull { it.name == name } }
+                                .map { block -> block to catalog.glyphsOf(block) }
+                        }
+                        val pinnedCharItems =
+                            if (data.pinnedChars.isEmpty()) 0 else data.pinnedChars.size + 1
+                        val recentItems =
+                            if (recentsSnapshot.isEmpty()) 0 else recentsSnapshot.size + 1
+                        val pinnedBlockItems = pinnedSections.sumOf { it.second.size + 1 }
+                        val catalogOffset = pinnedCharItems + recentItems + pinnedBlockItems
+
+                        // Jump targets for the block index overlay.
+                        val pinnedJumpIndex = buildMap {
+                            var acc = pinnedCharItems + recentItems
+                            for ((block, chars) in pinnedSections) {
+                                put(block.name, acc)
+                                acc += chars.size + 1
+                            }
+                        }
+
                         LazyVerticalGrid(
                             state = gridState,
                             columns = GridCells.Adaptive(minSize = 42.dp),
                             modifier = Modifier.fillMaxSize().padding(horizontal = 4.dp),
                         ) {
+                            if (data.pinnedChars.isNotEmpty()) {
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    BlockHeaderRow(name = "📌 Pinned", range = null)
+                                }
+                                items(data.pinnedChars.size) { i ->
+                                    GlyphCell(data.pinnedChars[i], haptics, callbacks.onInsert) {
+                                        detailCp = it
+                                    }
+                                }
+                            }
                             if (recentsSnapshot.isNotEmpty()) {
                                 item(span = { GridItemSpan(maxLineSpan) }) {
                                     BlockHeaderRow(name = "Recent", range = null)
                                 }
                                 items(recentsSnapshot.size) { i ->
-                                    GlyphCell(recentsSnapshot[i], haptics, onInsert) { detailCp = it }
+                                    GlyphCell(recentsSnapshot[i], haptics, callbacks.onInsert) {
+                                        detailCp = it
+                                    }
+                                }
+                            }
+                            for ((block, chars) in pinnedSections) {
+                                item(span = { GridItemSpan(maxLineSpan) }) {
+                                    BlockHeaderRow(
+                                        name = "📌 ${block.name}",
+                                        range = "${CodePoints.toUPlus(block.start)}–${CodePoints.toUPlus(block.end)}",
+                                        onLongPress = { pinBlockWithHaptic(block.name) },
+                                    )
+                                }
+                                items(chars.size) { i ->
+                                    GlyphCell(chars[i], haptics, callbacks.onInsert) { detailCp = it }
                                 }
                             }
                             items(
@@ -142,12 +209,35 @@ fun UnicodeBrowserPanel(
                                 },
                             ) { i ->
                                 when (val item = catalog.items[i]) {
-                                    is CharGridItem.BlockHeader ->
-                                        BlockHeaderRow(name = item.name, range = item.range)
+                                    is CharGridItem.BlockHeader -> {
+                                        val pinned = item.name in data.pinnedBlocks
+                                        BlockHeaderRow(
+                                            name = if (pinned) "📌 ${item.name}" else item.name,
+                                            range = item.range,
+                                            onLongPress = { pinBlockWithHaptic(item.name) },
+                                        )
+                                    }
                                     is CharGridItem.Glyph ->
-                                        GlyphCell(item.codePoint, haptics, onInsert) { detailCp = it }
+                                        GlyphCell(item.codePoint, haptics, callbacks.onInsert) {
+                                            detailCp = it
+                                        }
                                 }
                             }
+                        }
+
+                        if (blockIndexOpen) {
+                            BlockIndexOverlay(
+                                catalog = catalog,
+                                pinnedBlocks = data.pinnedBlocks,
+                                onJump = { index ->
+                                    blockIndexOpen = false
+                                    scope.launch { gridState.scrollToItem(index) }
+                                },
+                                pinnedJumpIndex = pinnedJumpIndex,
+                                catalogOffset = catalogOffset,
+                                onTogglePin = { pinBlockWithHaptic(it) },
+                                onDismiss = { blockIndexOpen = false },
+                            )
                         }
                     }
                 }
@@ -171,23 +261,17 @@ fun UnicodeBrowserPanel(
             }
         }
 
-        if (blockIndexOpen && catalogState is CatalogUiState.Ready) {
-            BlockIndexOverlay(
-                catalog = catalogState.catalog,
-                onJump = { headerIndex ->
-                    blockIndexOpen = false
-                    scope.launch { gridState.scrollToItem(recentsItemCount + headerIndex) }
-                },
-                onDismiss = { blockIndexOpen = false },
-            )
-        }
-
         detailCp?.let { cp ->
             CharDetailOverlay(
                 cp = cp,
                 catalog = (catalogState as? CatalogUiState.Ready)?.catalog,
+                pinned = cp in data.pinnedChars,
+                onTogglePin = {
+                    callbacks.onTogglePinChar(cp)
+                    detailCp = null
+                },
                 onInsert = {
-                    onInsert(cp)
+                    callbacks.onInsert(cp)
                     detailCp = null
                 },
                 onDismiss = { detailCp = null },
@@ -195,6 +279,12 @@ fun UnicodeBrowserPanel(
         }
     }
 }
+
+/** The glyph code points belonging to [block], in catalog order. */
+private fun UnicodeCatalog.glyphsOf(block: UnicodeBlockInfo): List<Int> =
+    items.subList(block.headerIndex + 1, block.headerIndex + 1 + block.charCount)
+        .filterIsInstance<CharGridItem.Glyph>()
+        .map { it.codePoint }
 
 @Composable
 private fun BrowserTopBar(
@@ -317,11 +407,20 @@ private fun SearchResults(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun BlockHeaderRow(name: String, range: String?) {
+private fun BlockHeaderRow(
+    name: String,
+    range: String?,
+    onLongPress: (() -> Unit)? = null,
+) {
     val colors = MaterialTheme.colorScheme
+    val base = Modifier.fillMaxWidth()
+    val clickModifier = if (onLongPress != null) {
+        base.combinedClickable(onClick = {}, onLongClick = onLongPress)
+    } else base
     Row(
-        Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 12.dp, bottom = 4.dp),
+        clickModifier.padding(start = 4.dp, end = 4.dp, top = 12.dp, bottom = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -376,17 +475,23 @@ private fun GlyphCell(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun BlockIndexOverlay(
     catalog: UnicodeCatalog,
-    onJump: (headerIndex: Int) -> Unit,
+    pinnedBlocks: List<String>,
+    pinnedJumpIndex: Map<String, Int>,
+    catalogOffset: Int,
+    onJump: (Int) -> Unit,
+    onTogglePin: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val colors = MaterialTheme.colorScheme
     // Plain in-panel overlay: dialogs are unreliable from an IME window.
     Box(
         Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.45f))
+            .background(colors.scrim.copy(alpha = 0.45f))
             .clickable(
                 interactionSource = remember { MutableInteractionSource() },
                 indication = null,
@@ -402,36 +507,51 @@ private fun BlockIndexOverlay(
             tonalElevation = 6.dp,
         ) {
             Column(Modifier.padding(vertical = 8.dp)) {
-                Text(
-                    text = "Jump to block  ·  ${catalog.blocks.size} blocks, ${catalog.totalChars} characters",
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                )
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = "Jump to block · long-press to pin · ${catalog.blocks.size} blocks",
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colors.primary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Box(
+                        Modifier
+                            .size(32.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(colors.surfaceVariant)
+                            .clickable(onClick = onDismiss),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Text("✕", color = colors.onSurface, fontSize = 14.sp)
+                    }
+                }
+                val pinnedInfos =
+                    pinnedBlocks.mapNotNull { name -> catalog.blocks.firstOrNull { it.name == name } }
                 LazyColumn(Modifier.weight(1f)) {
+                    items(pinnedInfos.size) { i ->
+                        val block = pinnedInfos[i]
+                        BlockIndexRow(
+                            title = "📌 ${block.name}",
+                            subtitle = CodePoints.toUPlus(block.start),
+                            onClick = { onJump(pinnedJumpIndex[block.name] ?: 0) },
+                            onLongClick = { onTogglePin(block.name) },
+                        )
+                    }
                     items(catalog.blocks.size) { i ->
                         val block = catalog.blocks[i]
-                        Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable { onJump(block.headerIndex) }
-                                .padding(horizontal = 16.dp, vertical = 9.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                text = block.name,
-                                fontSize = 14.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                            Text(
-                                text = CodePoints.toUPlus(block.start),
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
+                        val pinned = block.name in pinnedBlocks
+                        BlockIndexRow(
+                            title = if (pinned) "📌 ${block.name}" else block.name,
+                            subtitle = CodePoints.toUPlus(block.start),
+                            onClick = { onJump(catalogOffset + block.headerIndex) },
+                            onLongClick = { onTogglePin(block.name) },
+                        )
                     }
                 }
             }
@@ -439,10 +559,42 @@ private fun BlockIndexOverlay(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun BlockIndexRow(
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick)
+            .padding(horizontal = 16.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title,
+            fontSize = 14.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = subtitle,
+            fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 @Composable
 private fun CharDetailOverlay(
     cp: Int,
     catalog: UnicodeCatalog?,
+    pinned: Boolean,
+    onTogglePin: () -> Unit,
     onInsert: () -> Unit,
     onDismiss: () -> Unit,
 ) {
@@ -485,6 +637,8 @@ private fun CharDetailOverlay(
                 )
                 Spacer(Modifier.height(12.dp))
                 Row {
+                    TextButton(onClick = onTogglePin) { Text(if (pinned) "Unpin" else "Pin") }
+                    Spacer(Modifier.width(4.dp))
                     TextButton(onClick = {
                         val clipboard = context.getSystemService(ClipboardManager::class.java)
                         clipboard?.setPrimaryClip(
@@ -492,7 +646,7 @@ private fun CharDetailOverlay(
                         )
                         onDismiss()
                     }) { Text("Copy") }
-                    Spacer(Modifier.width(12.dp))
+                    Spacer(Modifier.width(4.dp))
                     TextButton(onClick = onInsert) { Text("Insert") }
                 }
             }
