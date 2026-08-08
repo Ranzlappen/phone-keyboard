@@ -4,7 +4,12 @@ import io.github.ranzlappen.glyphboard.data.layouts.FnKey
 
 /** Everything a key press can mean. Committing actions reach the IME service; the rest is UI state. */
 sealed interface KeyAction {
-    data class Text(val text: String) : KeyAction
+    /**
+     * [exact] marks deliberate selections (hold-popup picks, clipboard
+     * inserts) that layout-level transforms like chaos-mode randomization
+     * must never rewrite. Plain key taps leave it false.
+     */
+    data class Text(val text: String, val exact: Boolean = false) : KeyAction
 
     /** A system/function key from the layout editor (arrows, F-keys, clipboard, media…). */
     data class Fn(val key: FnKey) : KeyAction
@@ -29,7 +34,7 @@ enum class KeyStyle { Plain, Function, Accent }
 
 enum class ShiftState { Off, On, Locked }
 
-enum class KeyboardMode { Alpha, Symbols, SymbolsAlt, Unicode }
+enum class KeyboardMode { Alpha, Symbols, SymbolsAlt, Unicode, Clipboard }
 
 data class Key(
     val label: String,

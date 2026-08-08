@@ -46,8 +46,21 @@ or combining diacritic.
   F1–F12, copy/cut/paste/select-all, play/pause/next/prev, volume up/down/
   mute, Caps Lock, and one-shot **Ctrl/Alt modifiers** (Ctrl+C, Ctrl+Z…
   sent as real key events; shift+arrows selects text) to any key.
-- **Similarity popups**: an editable lookalike database (u → ʋ υ ᴜ 𝕦…,
-  seeded for a–z) merges into any key's hold popup via a per-key checkbox.
+- **Similarity database**: an editable lookalike table covering a–z, A–Z,
+  and 0–9 with hundreds of mappings — cross-script homoglyphs (Cyrillic,
+  Greek, Cherokee, Lisu, small caps, IPA), all 13 mathematical styles
+  (𝐛𝑜𝒍𝔡, 𝕕𝗈𝘂𝙗𝚕𝑒-𝖘𝓉𝔯𝗎𝚌𝑘…), fullwidth, circled, squared, super/subscripts.
+  It feeds per-key hold popups (u → ʋ υ ᴜ 𝕦…) and…
+- **Chaos mode** 🎲: a per-layout checkbox — type normally and every plain
+  key press commits a *random* lookalike (ʜ𝚎ⅼˡ𝕠 ᴡ𝗈ʀӏď). Deliberate picks
+  (hold popups, clipboard) stay exactly what you chose.
+- **38+ preset layouts**: "Add layout" offers QWERTZ, AZERTY, Nordic and
+  20+ language variants, Cyrillic (Russian/Ukrainian/Serbian…), Greek,
+  Hebrew, Arabic, Persian, Georgian, Turkish F, plus Dvorak, Colemak(-DH),
+  Workman, and Norman — each fully editable after adding.
+- **Clipboard panel**: assign the 📋 key for an in-keyboard clipboard —
+  current system clip plus locally pinned snippets, tap to insert. The
+  clipboard is read only while the panel is open, never in the background.
 - **Zalgo slider**: a per-key checkbox adds a vertical slider to the hold
   popup — drag up for live, increasingly cursed z̴̪̈a̶͖͂l̷̻̽g̸͚̈o̵̘̊ text. Or enable the
   per-layout **shift-key slider**: hold ⇧, set a level, and everything you
@@ -55,11 +68,12 @@ or combining diacritic.
 - **Pinning**: pin single characters (long-press → Pin) into a section above
   Recents, or entire blocks (long-press a block name) right below it.
 - **Quick switch button**: optional accessibility service that puts keyboard
-  switching on the system accessibility button — one tap to GlyphBoard from
-  anywhere, tap again to hop straight back to the keyboard you came from.
-  Declares zero data access: no events, no window content, nothing to read.
-  (Android 13+ sideloads: allow restricted settings via App info → ⋮ first —
-  the app links you there.)
+  switching on the system accessibility button — one tap switches to
+  GlyphBoard from anywhere (on Android 13+ it even *enables* GlyphBoard
+  first if needed), tap again to hop straight back to the keyboard you came
+  from. Declares zero data access: no events, no window content, nothing to
+  read. (Android 13+ sideloads: allow restricted settings via App info → ⋮
+  first — the app links you there.)
 - **Private by design**: no INTERNET permission, no permissions at all, no
   autocorrect, no logging. What you type never leaves the input field.
 - **Material 3** with dynamic color (Android 12+) and dark mode.

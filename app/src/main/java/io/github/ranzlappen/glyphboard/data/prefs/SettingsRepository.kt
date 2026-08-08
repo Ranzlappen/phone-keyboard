@@ -21,6 +21,11 @@ class SettingsRepository(private val context: Context) {
         val PINNED_CHARS = stringPreferencesKey("pinned_characters")
         val PINNED_BLOCKS = stringPreferencesKey("pinned_blocks")
         val LAST_OTHER_IME = stringPreferencesKey("last_other_ime")
+        val PINNED_CLIPS = stringPreferencesKey("pinned_clips")
+    }
+
+    private companion object {
+        const val MAX_PINNED_CLIPS = 20
     }
 
     val hapticsEnabled: Flow<Boolean> =
@@ -43,6 +48,26 @@ class SettingsRepository(private val context: Context) {
     /** IME id the quick-switch button last switched away from (toggle target). */
     val lastOtherIme: Flow<String?> =
         context.glyphDataStore.data.map { it[Keys.LAST_OTHER_IME] }
+
+    /** Clips the user pinned in the keyboard's clipboard panel, newest first. */
+    val pinnedClips: Flow<List<String>> =
+        context.glyphDataStore.data.map { PinnedBlocks.decode(it[Keys.PINNED_CLIPS] ?: "") }
+
+    suspend fun pinClip(text: String) {
+        if (text.isBlank()) return
+        context.glyphDataStore.edit { prefs ->
+            val current = PinnedBlocks.decode(prefs[Keys.PINNED_CLIPS] ?: "")
+            val next = (listOf(text) + (current - text)).take(MAX_PINNED_CLIPS)
+            prefs[Keys.PINNED_CLIPS] = PinnedBlocks.encode(next)
+        }
+    }
+
+    suspend fun unpinClip(text: String) {
+        context.glyphDataStore.edit { prefs ->
+            val current = PinnedBlocks.decode(prefs[Keys.PINNED_CLIPS] ?: "")
+            prefs[Keys.PINNED_CLIPS] = PinnedBlocks.encode(current - text)
+        }
+    }
 
     suspend fun setHapticsEnabled(value: Boolean) {
         context.glyphDataStore.edit { it[Keys.HAPTICS] = value }

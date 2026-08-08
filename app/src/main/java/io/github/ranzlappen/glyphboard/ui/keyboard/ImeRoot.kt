@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.ranzlappen.glyphboard.data.layouts.FnKey
+import io.github.ranzlappen.glyphboard.data.similarity.SimilarityRandomizer
 import io.github.ranzlappen.glyphboard.ime.ImeUiState
 import io.github.ranzlappen.glyphboard.ui.unicode.BrowserCallbacks
 import io.github.ranzlappen.glyphboard.ui.unicode.BrowserData
@@ -49,8 +50,12 @@ fun GlyphBoardIme(
     haptics: Boolean,
     layoutRows: List<List<Key>>,
     layoutShiftZalgo: Boolean,
+    layoutRandomize: Boolean,
     spaceLabel: String?,
     similarity: Map<String, List<String>>,
+    pinnedClips: List<String>,
+    onPinClip: (String) -> Unit,
+    onUnpinClip: (String) -> Unit,
     performAction: (KeyAction) -> Unit,
     onFnKey: (fn: FnKey, ctrl: Boolean, alt: Boolean, shift: Boolean) -> Unit,
     onModifiedChar: (text: String, ctrl: Boolean, alt: Boolean) -> Unit,
@@ -81,6 +86,7 @@ fun GlyphBoardIme(
                 FnKey.Alt -> state.alt = !state.alt
                 FnKey.CapsLock -> state.shift =
                     if (state.shift == ShiftState.Locked) ShiftState.Off else ShiftState.Locked
+                FnKey.Clipboard -> state.mode = KeyboardMode.Clipboard
                 else -> {
                     // Shift meta enables shift+arrow text selection; sticky
                     // shift is kept so a selection can span several arrows.
@@ -90,15 +96,21 @@ fun GlyphBoardIme(
                 }
             }
             is KeyAction.Text -> {
-                when {
-                    state.ctrl || state.alt -> {
-                        onModifiedChar(action.text, state.ctrl, state.alt)
-                        state.ctrl = false
-                        state.alt = false
+                if (state.ctrl || state.alt) {
+                    onModifiedChar(action.text, state.ctrl, state.alt)
+                    state.ctrl = false
+                    state.alt = false
+                } else {
+                    // Chaos mode first (skipping deliberate `exact` picks),
+                    // then the sticky zalgo level on top.
+                    var text = action.text
+                    if (layoutRandomize && !action.exact) {
+                        text = SimilarityRandomizer.randomize(text, similarity)
                     }
-                    state.zalgoLevel > 0 ->
-                        performAction(KeyAction.Text(Zalgo.apply(action.text, state.zalgoLevel)))
-                    else -> performAction(action)
+                    if (state.zalgoLevel > 0) {
+                        text = Zalgo.apply(text, state.zalgoLevel)
+                    }
+                    performAction(KeyAction.Text(text))
                 }
                 if (state.shift == ShiftState.On) state.shift = ShiftState.Off
             }
@@ -125,6 +137,15 @@ fun GlyphBoardIme(
                     data = browserData,
                     callbacks = browserCallbacks,
                     haptics = haptics,
+                    onClose = { state.mode = KeyboardMode.Alpha },
+                )
+                KeyboardMode.Clipboard -> ClipboardPanel(
+                    pinnedClips = pinnedClips,
+                    // exact: clipboard inserts are deliberate — chaos mode
+                    // must not rewrite them.
+                    onCommit = { dispatch(KeyAction.Text(it, exact = true)) },
+                    onPinClip = onPinClip,
+                    onUnpinClip = onUnpinClip,
                     onClose = { state.mode = KeyboardMode.Alpha },
                 )
                 else -> {

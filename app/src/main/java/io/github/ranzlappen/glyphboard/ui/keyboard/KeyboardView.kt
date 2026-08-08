@@ -311,7 +311,9 @@ private fun KeyButton(
                             } else {
                                 val committed = popup?.commit(gestureToken)
                                 if (lifted && committed != null) {
-                                    currentOnAction(KeyAction.Text(committed))
+                                    // exact: a slide-selected variant is a
+                                    // deliberate choice chaos mode must keep.
+                                    currentOnAction(KeyAction.Text(committed, exact = true))
                                 }
                             }
                         } else if (lifted && !holdActionFired && !cycled && !key.repeatable) {

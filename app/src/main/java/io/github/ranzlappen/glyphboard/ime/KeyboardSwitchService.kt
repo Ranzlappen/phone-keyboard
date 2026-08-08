@@ -68,10 +68,35 @@ class KeyboardSwitchService : AccessibilityService() {
         val glyphBoardIsCurrent = currentImeId != null && currentImeId.startsWith("$packageName/")
 
         when {
-            // Not enabled yet → the setup screen is the only useful target.
+            // Not enabled in system settings yet. Android 13+ lets an
+            // accessibility service enable an IME in its own package — the
+            // whole point of this button is working from anywhere.
             ourImeId == null -> {
-                toast("Enable GlyphBoard first — opening setup")
-                openApp(showPicker = false)
+                val installedId =
+                    imm.inputMethodList.firstOrNull { it.packageName == packageName }?.id
+                if (installedId != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    try {
+                        softKeyboardController.setInputMethodEnabled(installedId, true)
+                        scope.launch {
+                            currentImeId?.let { settings.setLastOtherIme(it) }
+                            if (softKeyboardController.switchToInputMethod(installedId)) {
+                                toast("GlyphBoard enabled and active")
+                            } else {
+                                toast("GlyphBoard enabled — pick it in the keyboard picker")
+                                imm.showInputMethodPicker()
+                            }
+                        }
+                    } catch (e: SecurityException) {
+                        toast("Couldn't enable GlyphBoard — opening keyboard settings")
+                        openImeSettings()
+                    } catch (e: IllegalArgumentException) {
+                        toast("Couldn't enable GlyphBoard — opening keyboard settings")
+                        openImeSettings()
+                    }
+                } else {
+                    toast("Enable GlyphBoard in keyboard settings first")
+                    openImeSettings()
+                }
             }
 
             // Switch TO GlyphBoard, remembering where we came from so the
@@ -116,6 +141,14 @@ class KeyboardSwitchService : AccessibilityService() {
 
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun openImeSettings() {
+        startActivity(
+            Intent(Settings.ACTION_INPUT_METHOD_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        )
     }
 
     private fun openApp(showPicker: Boolean) {

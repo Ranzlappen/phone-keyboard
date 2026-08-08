@@ -110,6 +110,7 @@ class GlyphBoardService :
                     val recents by settings.recentCharacters.collectAsState(initial = emptyList())
                     val pinnedChars by settings.pinnedCharacters.collectAsState(initial = emptyList())
                     val pinnedBlocks by settings.pinnedBlocks.collectAsState(initial = emptyList())
+                    val pinnedClips by settings.pinnedClips.collectAsState(initial = emptyList())
                     val haptics by settings.hapticsEnabled.collectAsState(initial = true)
                     val layoutConfig by layouts.config.collectAsState(initial = DefaultLayouts.config())
                     val similarityMap by similarity.map.collectAsState(initial = emptyMap())
@@ -139,8 +140,12 @@ class GlyphBoardService :
                         haptics = haptics,
                         layoutRows = layoutRows,
                         layoutShiftZalgo = activeLayout.shiftZalgo,
+                        layoutRandomize = activeLayout.randomize,
                         spaceLabel = if (layoutConfig.layouts.size > 1) activeLayout.name else null,
                         similarity = similarityMap,
+                        pinnedClips = pinnedClips,
+                        onPinClip = { serviceScope.launch { settings.pinClip(it) } },
+                        onUnpinClip = { serviceScope.launch { settings.unpinClip(it) } },
                         performAction = ::performAction,
                         onFnKey = ::performFnKey,
                         onModifiedChar = ::performModifiedChar,
@@ -269,20 +274,22 @@ class GlyphBoardService :
             FnKey.VolumeUp -> adjustVolume(AudioManager.ADJUST_RAISE)
             FnKey.VolumeDown -> adjustVolume(AudioManager.ADJUST_LOWER)
             FnKey.Mute -> adjustVolume(AudioManager.ADJUST_TOGGLE_MUTE)
-            FnKey.Ctrl, FnKey.Alt, FnKey.CapsLock -> Unit
+            // Handled as UI state / mode changes in ImeRoot.dispatch.
+            FnKey.Ctrl, FnKey.Alt, FnKey.CapsLock, FnKey.Clipboard -> Unit
             else -> fnKeyCode(fn)?.let { sendKeyWithMeta(it, metaState(ctrl, alt, shiftMeta)) }
         }
     }
 
     /**
      * Ctrl/Alt + character: sent as a real key event (Ctrl+C, Ctrl+Z, Alt+…)
-     * when the character has a keycode; otherwise the modifiers are dropped
-     * and the text commits normally.
+     * when the character has a keycode ([KeyCharMap] covers letters, digits,
+     * and US punctuation incl. shifted symbols); otherwise the modifiers are
+     * dropped and the text commits normally.
      */
     private fun performModifiedChar(text: String, ctrl: Boolean, alt: Boolean) {
-        val code = text.singleOrNull()?.lowercaseChar()?.let { charKeyCode(it) }
-        if (code != null) {
-            sendKeyWithMeta(code, metaState(ctrl, alt, shiftMeta = false))
+        val mapped = text.singleOrNull()?.let { KeyCharMap.lookup(it) }
+        if (mapped != null) {
+            sendKeyWithMeta(mapped.keyCode, metaState(ctrl, alt, shiftMeta = mapped.shift))
         } else {
             currentInputConnection?.commitText(text, 1)
         }
@@ -313,13 +320,6 @@ class GlyphBoardService :
         FnKey.F10 -> KeyEvent.KEYCODE_F10
         FnKey.F11 -> KeyEvent.KEYCODE_F11
         FnKey.F12 -> KeyEvent.KEYCODE_F12
-        else -> null
-    }
-
-    private fun charKeyCode(c: Char): Int? = when (c) {
-        in 'a'..'z' -> KeyEvent.KEYCODE_A + (c - 'a')
-        in '0'..'9' -> KeyEvent.KEYCODE_0 + (c - '0')
-        ' ' -> KeyEvent.KEYCODE_SPACE
         else -> null
     }
 
