@@ -287,7 +287,12 @@ class GlyphBoardService :
      * dropped and the text commits normally.
      */
     private fun performModifiedChar(text: String, ctrl: Boolean, alt: Boolean) {
-        val mapped = text.singleOrNull()?.let { KeyCharMap.lookup(it) }
+        // Letters are lowercased first: the case usually comes from
+        // auto-capitalize, and Ctrl+Shift+A ≠ Ctrl+A in most editors.
+        // Shifted SYMBOLS ('!' = shift+1) keep their synthesized shift meta.
+        val mapped = text.singleOrNull()
+            ?.let { if (it.isLetter()) it.lowercaseChar() else it }
+            ?.let { KeyCharMap.lookup(it) }
         if (mapped != null) {
             sendKeyWithMeta(mapped.keyCode, metaState(ctrl, alt, shiftMeta = mapped.shift))
         } else {

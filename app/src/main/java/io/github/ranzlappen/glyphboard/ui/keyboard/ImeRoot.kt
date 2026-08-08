@@ -96,7 +96,10 @@ fun GlyphBoardIme(
                 }
             }
             is KeyAction.Text -> {
-                if (state.ctrl || state.alt) {
+                // exact inserts (popup picks, clipboard) are text, never key
+                // combos — a latched Ctrl must not turn a pasted "a" into
+                // select-all. The latch stays armed for the next plain key.
+                if ((state.ctrl || state.alt) && !action.exact) {
                     onModifiedChar(action.text, state.ctrl, state.alt)
                     state.ctrl = false
                     state.alt = false

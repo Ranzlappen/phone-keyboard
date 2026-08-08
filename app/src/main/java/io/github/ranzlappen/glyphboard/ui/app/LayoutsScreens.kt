@@ -38,6 +38,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -419,6 +420,12 @@ private fun LayoutPreview(
 ) {
     val colors = MaterialTheme.colorScheme
     val density = LocalDensity.current
+    // The drag pointerInput below is keyed on (row, col) only — like
+    // KeyboardView, everything it reads must go through rememberUpdatedState
+    // or a second drag would compute against (and SAVE) the layout captured
+    // at first composition, silently reverting every edit made since.
+    val currentLayout by rememberUpdatedState(layout)
+    val currentOnMoveKey by rememberUpdatedState(onMoveKey)
     // All geometry in root coordinates; the ghost converts back to local.
     var previewOrigin by remember { mutableStateOf(Offset.Zero) }
     val rowBounds = remember { mutableStateMapOf<Int, Rect>() }
@@ -428,8 +435,8 @@ private fun LayoutPreview(
 
     fun dropTarget(): Pair<Int, Int>? {
         val from = dragging ?: return null
-        val validRows = layout.rows.indices
-        val targetRow = validRows.minByOrNull { r ->
+        val rows = currentLayout.rows
+        val targetRow = rows.indices.minByOrNull { r ->
             val b = rowBounds[r] ?: return@minByOrNull Float.MAX_VALUE
             when {
                 dragPos.y < b.top -> b.top - dragPos.y
@@ -437,7 +444,7 @@ private fun LayoutPreview(
                 else -> 0f
             }
         } ?: return null
-        val rowKeyCount = layout.rows[targetRow].keys.size
+        val rowKeyCount = rows[targetRow].keys.size
         // Insertion index = keys (excluding the dragged one) whose center is
         // left of the finger; correct post-removal even within the same row.
         val insert = keyBounds.entries.count { (pos, bounds) ->
@@ -454,8 +461,10 @@ private fun LayoutPreview(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .background(colors.surfaceContainerHigh)
-                .padding(4.dp)
-                .onGloballyPositioned { previewOrigin = it.positionInRoot() },
+                // Positioned BEFORE the padding so the ghost's coordinate
+                // conversion isn't skewed by 4dp.
+                .onGloballyPositioned { previewOrigin = it.positionInRoot() }
+                .padding(4.dp),
             verticalArrangement = Arrangement.spacedBy(2.dp),
         ) {
             layout.rows.forEachIndexed { r, row ->
@@ -508,8 +517,13 @@ private fun LayoutPreview(
                                             val from = dragging
                                             val target = dropTarget()
                                             dragging = null
-                                            if (from != null && target != null) {
-                                                onMoveKey(from.first, from.second, target.first, target.second)
+                                            // Skip no-op drops (a stationary
+                                            // long-press-release fires
+                                            // onDragEnd too).
+                                            if (from != null && target != null &&
+                                                target != from.first to from.second
+                                            ) {
+                                                currentOnMoveKey(from.first, from.second, target.first, target.second)
                                             }
                                         },
                                         onDragCancel = { dragging = null },

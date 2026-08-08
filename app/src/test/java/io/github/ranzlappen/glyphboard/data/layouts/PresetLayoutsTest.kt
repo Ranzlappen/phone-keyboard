@@ -51,15 +51,21 @@ class PresetLayoutsTest {
     }
 
     @Test
-    fun rtlPresetsAreReversedSoFirstLogicalKeyIsRightmost() {
-        val hebrew = PresetLayouts.all.first { it.name == "Hebrew" }
-        val layout = PresetLayouts.toCustomLayout(hebrew, "x")
-        // Logical first character of the Hebrew top row is ק; after RTL
-        // reversal it must be the LAST key of the rendered row.
-        assertEquals("ק", layout.rows.first().keys.last().output)
-        // Digit variants follow the logical (visual right-to-left) order:
-        // the rightmost key carries "1".
-        assertEquals("1", layout.rows.first().keys.last().variants.first())
+    fun rtlPresetsKeepPhysicalKeyOrder() {
+        // RTL preset strings are stored in physical left-to-right key order
+        // (SI-1452 / Arabic 101 / ISIRI 9147) and must NOT be mirrored:
+        // ק sits under the E key on the left, exactly as on real keyboards.
+        val hebrew = PresetLayouts.toCustomLayout(
+            PresetLayouts.all.first { it.name == "Hebrew" }, "x",
+        )
+        assertEquals("ק", hebrew.rows.first().keys.first().output)
+        val arabic = PresetLayouts.toCustomLayout(
+            PresetLayouts.all.first { it.name == "Arabic" }, "y",
+        )
+        assertEquals("ض", arabic.rows.first().keys.first().output)
+        // Digits run 1→0 left to right, as they do in both scripts.
+        assertEquals("1", hebrew.rows.first().keys.first().variants.first())
+        assertEquals("2", hebrew.rows.first().keys[1].variants.first())
     }
 
     @Test

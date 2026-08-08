@@ -7,10 +7,11 @@ package io.github.ranzlappen.glyphboard.data.layouts
  * character a defined code point, unique names).
  *
  * Conventions:
- *  - `rows` hold one character per key, in LEFT-TO-RIGHT display order.
- *    RTL scripts (Hebrew/Arabic/Persian) set [LayoutPreset.rtl] and list
- *    keys in logical order — the builder reverses them so the layout
- *    matches physical keyboards.
+ *  - `rows` hold one character per key, in LEFT-TO-RIGHT physical key
+ *    order — including RTL scripts: the national standards (SI-1452
+ *    Hebrew, Arabic 101, ISIRI 9147 Persian) define which glyph sits on
+ *    which physical key, and these strings list them left to right
+ *    exactly as printed on real keyboards. Never mirror them.
  *  - The first row automatically gets digit hold-variants (1…0 on the
  *    first ten keys), and Latin presets inherit the QWERTY accent table;
  *    [LayoutPreset.variants] adds language-specific extras per character.
@@ -19,7 +20,6 @@ data class LayoutPreset(
     val name: String,
     val rows: List<String>,
     val variants: Map<Char, String> = emptyMap(),
-    val rtl: Boolean = false,
     /** Merge the default Latin accent variants (ä, é, …) into matching keys. */
     val latinAccents: Boolean = true,
 )
@@ -145,21 +145,21 @@ object PresetLayouts {
             ),
             latinAccents = false,
         ),
-        // ── RTL scripts (rows in logical order; builder reverses) ───────
+        // ── RTL scripts (strings already in physical left-to-right order) ──
         LayoutPreset(
             "Hebrew",
             listOf("קראטוןםפ", "שדגכעיחלךף", "זסבהנמצתץ"),
-            rtl = true, latinAccents = false,
+            latinAccents = false,
         ),
         LayoutPreset(
             "Arabic",
             listOf("ضصثقفغعهخحجد", "شسيبلاتنمكط", "ئءؤرذىةوزظ"),
-            rtl = true, latinAccents = false,
+            latinAccents = false,
         ),
         LayoutPreset(
             "Persian",
             listOf("ضصثقفغعهخحجچ", "شسیبلاتنمکگ", "ظطزرذدپو"),
-            variants = mapOf('ز' to "ژ"), rtl = true, latinAccents = false,
+            variants = mapOf('ز' to "ژ"), latinAccents = false,
         ),
         // ── Other scripts ───────────────────────────────────────────────
         LayoutPreset(
@@ -172,12 +172,10 @@ object PresetLayouts {
     /** Builds an installable [CustomLayout] from a preset. */
     fun toCustomLayout(preset: LayoutPreset, id: String): CustomLayout {
         val rows = preset.rows.mapIndexed { rowIndex, rowChars ->
-            val chars = if (preset.rtl) rowChars.reversed() else rowChars
             CustomRow(
-                chars.mapIndexed { keyIndex, c ->
-                    val digitIndex = if (preset.rtl) chars.length - 1 - keyIndex else keyIndex
+                rowChars.mapIndexed { keyIndex, c ->
                     val variants = buildList {
-                        if (rowIndex == 0 && digitIndex < 10) add("1234567890"[digitIndex].toString())
+                        if (rowIndex == 0 && keyIndex < 10) add("1234567890"[keyIndex].toString())
                         if (preset.latinAccents) {
                             DefaultLayouts.accentVariants[c]?.forEach { add(it.toString()) }
                         }
