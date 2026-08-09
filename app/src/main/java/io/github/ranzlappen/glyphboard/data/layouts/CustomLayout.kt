@@ -53,6 +53,12 @@ data class CustomLayout(
      * sticks and zalgo-fies everything typed until set back to zero.
      */
     val shiftZalgo: Boolean = false,
+    /**
+     * Chaos mode: plain key taps commit a random lookalike from the
+     * similarity database instead of the typed character. Deliberate
+     * selections (hold popups, clipboard) are never rewritten.
+     */
+    val randomize: Boolean = false,
 )
 
 /** The whole persisted layout state: ordered list (= space-swipe cycle order) + active id. */

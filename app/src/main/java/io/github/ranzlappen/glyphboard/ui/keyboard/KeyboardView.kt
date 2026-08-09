@@ -149,15 +149,22 @@ private fun KeyButton(
 
     // Hold-popup candidates: explicit variants first, then similarity-store
     // lookalikes, deduplicated, shift-transformed for letter keys.
-    val candidates = remember(key, shiftActive, similarity) {
+    val candidates = remember(key, shiftActive, shiftedBase, similarity) {
         if (baseOutput == null) emptyList() else buildList {
             val seen = LinkedHashSet<String>()
             key.holdVariants.forEach { seen += if (shiftActive) it.uppercase() else it }
             if (key.includeSimilar) {
-                // Exact entry first so cased/custom bases work; fall back to
-                // the lowercase form the seed table uses.
-                (similarity[baseOutput] ?: similarity[baseOutput.lowercase()])?.forEach {
-                    seen += if (shiftActive) it.uppercase() else it
+                // Prefer the entry for the SHIFTED base ("A") so uppercase
+                // lookalikes (𝐀 𝔸 🄰) are used verbatim; only the lowercase
+                // fallback needs element-wise uppercasing (and many forms —
+                // small caps, math alphanumerics — have no uppercase at all).
+                val shiftedEntry = shiftedBase?.let { similarity[it] }
+                if (shiftedEntry != null) {
+                    seen += shiftedEntry
+                } else {
+                    (similarity[baseOutput] ?: similarity[baseOutput.lowercase()])?.forEach {
+                        seen += if (shiftActive) it.uppercase() else it
+                    }
                 }
             }
             addAll(seen)
@@ -311,7 +318,9 @@ private fun KeyButton(
                             } else {
                                 val committed = popup?.commit(gestureToken)
                                 if (lifted && committed != null) {
-                                    currentOnAction(KeyAction.Text(committed))
+                                    // exact: a slide-selected variant is a
+                                    // deliberate choice chaos mode must keep.
+                                    currentOnAction(KeyAction.Text(committed, exact = true))
                                 }
                             }
                         } else if (lifted && !holdActionFired && !cycled && !key.repeatable) {

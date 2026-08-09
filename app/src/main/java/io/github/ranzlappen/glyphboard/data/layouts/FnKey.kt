@@ -38,4 +38,5 @@ enum class FnKey(val glyph: String, val title: String) {
     VolumeUp("🔊", "Volume up"),
     VolumeDown("🔉", "Volume down"),
     Mute("🔇", "Mute toggle"),
+    Clipboard("📋", "Clipboard panel"),
 }

@@ -47,8 +47,23 @@ see Key Conventions). Two entry points share one process and one DataStore:
   Ctrl/Alt/CapsLock and the sticky shift-slider zalgo level are UI state in
   `ImeUiState`, applied in `ImeRoot.dispatch`.
 * **`data/similarity/`** — the editable lookalike database behind the
-  per-key "similar characters" popup checkbox; seeded from
-  `SimilarityDefaults` (pure, tested).
+  per-key "similar characters" popup checkbox and the per-layout chaos
+  mode. `SimilarityDefaults` GENERATES the seed (curated homoglyph tables +
+  the 13 Mathematical-Alphanumeric styles with their Letterlike-Symbols
+  hole code points + fullwidth/circled/squared/super/subscript forms — a
+  test asserts every code point is assigned). `SimilarityRandomizer` (pure)
+  picks the random lookalike for chaos mode; applied in `ImeRoot.dispatch`
+  for non-`exact` Text actions only (popup picks and clipboard inserts set
+  `KeyAction.Text.exact`).
+* **`data/layouts/PresetLayouts.kt`** — the 38+ preset gallery behind "Add
+  layout" (pure data; RTL presets store rows in logical order and are
+  reversed at build time). Structure validated by tests.
+* **`ui/keyboard/ClipboardPanel.kt`** — the in-keyboard clipboard behind
+  the 📋 function key. **Privacy invariant: reads the system clipboard only
+  while the panel is open** — no background listeners; pinned clips persist
+  locally in DataStore.
+* **`ime/KeyCharMap.kt`** — char → key event mapping for Ctrl/Alt combos
+  (full printable-ASCII coverage; shifted symbols synthesize shift meta).
 * **`ui/keyboard/KeyPopup.kt`** — the hold-popup engine: `KeyPopupState`
   (candidate grid that wraps onto multiple rows, plus optional vertical zalgo
   slider, all geometry in root coordinates) and the overlay renderer. The

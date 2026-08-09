@@ -3,6 +3,8 @@ package io.github.ranzlappen.glyphboard.ui.app
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +13,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -32,16 +35,26 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import io.github.ranzlappen.glyphboard.data.layouts.CustomKey
@@ -50,8 +63,10 @@ import io.github.ranzlappen.glyphboard.data.layouts.CustomRow
 import io.github.ranzlappen.glyphboard.data.layouts.DefaultLayouts
 import io.github.ranzlappen.glyphboard.data.layouts.FnKey
 import io.github.ranzlappen.glyphboard.data.layouts.LayoutConfig
+import io.github.ranzlappen.glyphboard.data.layouts.PresetLayouts
 import io.github.ranzlappen.glyphboard.data.layouts.VariantParser
 import java.util.UUID
+import kotlin.math.roundToInt
 
 /**
  * Layout manager: the ordered list is the space-swipe cycle order. All edits
@@ -140,14 +155,49 @@ fun LayoutsListScreen(
             }
         }
 
-        Button(onClick = {
-            val fresh = DefaultLayouts.qwerty().copy(
-                id = UUID.randomUUID().toString(),
-                name = "Layout ${config.layouts.size + 1}",
+        var showPresetPicker by rememberSaveable { mutableStateOf(false) }
+        Button(onClick = { showPresetPicker = true }) { Text("Add layout…") }
+
+        if (showPresetPicker) {
+            AlertDialog(
+                onDismissRequest = { showPresetPicker = false },
+                title = { Text("Choose a preset") },
+                text = {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                showPresetPicker = false
+                                val fresh = CustomLayout(
+                                    id = UUID.randomUUID().toString(),
+                                    name = "Layout ${config.layouts.size + 1}",
+                                    rows = listOf(CustomRow(listOf(CustomKey(output = "?")))),
+                                )
+                                onSave(config.copy(layouts = config.layouts + fresh))
+                                onOpenEditor(fresh.id)
+                            }.padding(vertical = 10.dp),
+                        ) { Text("Empty layout", fontWeight = FontWeight.SemiBold) }
+                        HorizontalDivider()
+                        PresetLayouts.all.forEach { preset ->
+                            Row(
+                                Modifier.fillMaxWidth().clickable {
+                                    showPresetPicker = false
+                                    val fresh = PresetLayouts.toCustomLayout(
+                                        preset,
+                                        UUID.randomUUID().toString(),
+                                    )
+                                    onSave(config.copy(layouts = config.layouts + fresh))
+                                    onOpenEditor(fresh.id)
+                                }.padding(vertical = 10.dp),
+                            ) { Text(preset.name, fontSize = 14.sp) }
+                        }
+                    }
+                },
+                confirmButton = {},
+                dismissButton = {
+                    TextButton(onClick = { showPresetPicker = false }) { Text("Cancel") }
+                },
             )
-            onSave(config.copy(layouts = config.layouts + fresh))
-            onOpenEditor(fresh.id)
-        }) { Text("Add layout") }
+        }
     }
 }
 
@@ -231,9 +281,27 @@ fun LayoutEditorScreen(
             }
         }
 
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = layout.randomize,
+                onCheckedChange = { update(layout.copy(randomize = it)) },
+            )
+            Column {
+                Text("Randomize with similar characters", fontSize = 14.sp)
+                Text(
+                    "Chaos mode: every plain key press types a random lookalike " +
+                        "from the similarity database (ʜ𝚎ⅼˡ𝕠 ᴡ𝗈ʀӏď). Hold-popup " +
+                        "picks stay exactly what you chose.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
         Text(
-            "Tap any key in the preview to edit it. Greyed keys (shift, backspace, " +
-                "bottom row) are added automatically.",
+            "Tap any key in the preview to edit it; long-press and drag to move " +
+                "it (across rows too). Greyed keys (shift, backspace, bottom row) " +
+                "are added automatically.",
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -245,6 +313,26 @@ fun LayoutEditorScreen(
             onKeyTap = { r, c ->
                 editingRow = r
                 editingCol = c
+            },
+            onMoveKey = { fromRow, fromCol, toRow, toCol ->
+                val key = layout.rows.getOrNull(fromRow)?.keys?.getOrNull(fromCol)
+                if (key != null) {
+                    var rows = layout.rows.mapIndexed { i, row ->
+                        if (i == fromRow) {
+                            CustomRow(row.keys.filterIndexed { j, _ -> j != fromCol })
+                        } else row
+                    }
+                    rows = rows.mapIndexed { i, row ->
+                        if (i == toRow) {
+                            CustomRow(
+                                row.keys.toMutableList()
+                                    .apply { add(toCol.coerceIn(0, size), key) }
+                            )
+                        } else row
+                    }
+                    update(layout.copy(rows = rows))
+                    closeDialog()
+                }
             },
         )
 
@@ -319,7 +407,8 @@ private const val PREVIEW_LOGICAL_WIDTH = 10f
 /**
  * Interactive miniature of the layout: the user's rows plus greyed-out
  * previews of the auto-added control skeleton. Tapping a key opens its
- * editor dialog.
+ * editor dialog; long-press-dragging moves it — within a row or across
+ * rows — with a floating ghost following the finger.
  */
 @Composable
 private fun LayoutPreview(
@@ -327,54 +416,156 @@ private fun LayoutPreview(
     selectedRow: Int,
     selectedCol: Int,
     onKeyTap: (row: Int, col: Int) -> Unit,
+    onMoveKey: (fromRow: Int, fromCol: Int, toRow: Int, toCol: Int) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .background(colors.surfaceContainerHigh)
-            .padding(4.dp),
-        verticalArrangement = Arrangement.spacedBy(2.dp),
-    ) {
-        layout.rows.forEachIndexed { r, row ->
-            val isLast = r == layout.rows.lastIndex
-            Row(Modifier.fillMaxWidth().height(42.dp)) {
-                val rowWidth = row.keys.sumOf { it.width.toDouble() }.toFloat() +
-                    if (isLast) 3f else 0f
-                val side = (PREVIEW_LOGICAL_WIDTH - rowWidth) / 2f
-                if (side > 0f) Spacer(Modifier.weight(side))
-                if (isLast) GhostKey("⇧", 1.5f)
-                if (row.keys.isEmpty()) {
-                    Box(
-                        Modifier.weight(4f).padding(2.dp),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Text(
-                            "(empty row — use “+ key”)",
-                            fontSize = 11.sp,
-                            color = colors.onSurfaceVariant,
+    val density = LocalDensity.current
+    // The drag pointerInput below is keyed on (row, col) only — like
+    // KeyboardView, everything it reads must go through rememberUpdatedState
+    // or a second drag would compute against (and SAVE) the layout captured
+    // at first composition, silently reverting every edit made since.
+    val currentLayout by rememberUpdatedState(layout)
+    val currentOnMoveKey by rememberUpdatedState(onMoveKey)
+    // All geometry in root coordinates; the ghost converts back to local.
+    var previewOrigin by remember { mutableStateOf(Offset.Zero) }
+    val rowBounds = remember { mutableStateMapOf<Int, Rect>() }
+    val keyBounds = remember { mutableStateMapOf<Pair<Int, Int>, Rect>() }
+    var dragging by remember { mutableStateOf<Pair<Int, Int>?>(null) }
+    var dragPos by remember { mutableStateOf(Offset.Zero) }
+
+    fun dropTarget(): Pair<Int, Int>? {
+        val from = dragging ?: return null
+        val rows = currentLayout.rows
+        val targetRow = rows.indices.minByOrNull { r ->
+            val b = rowBounds[r] ?: return@minByOrNull Float.MAX_VALUE
+            when {
+                dragPos.y < b.top -> b.top - dragPos.y
+                dragPos.y > b.bottom -> dragPos.y - b.bottom
+                else -> 0f
+            }
+        } ?: return null
+        val rowKeyCount = rows[targetRow].keys.size
+        // Insertion index = keys (excluding the dragged one) whose center is
+        // left of the finger; correct post-removal even within the same row.
+        val insert = keyBounds.entries.count { (pos, bounds) ->
+            pos.first == targetRow && pos != from &&
+                pos.second < rowKeyCount &&
+                bounds.center.x < dragPos.x
+        }
+        return targetRow to insert
+    }
+
+    Box {
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(12.dp))
+                .background(colors.surfaceContainerHigh)
+                // Positioned BEFORE the padding so the ghost's coordinate
+                // conversion isn't skewed by 4dp.
+                .onGloballyPositioned { previewOrigin = it.positionInRoot() }
+                .padding(4.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp),
+        ) {
+            layout.rows.forEachIndexed { r, row ->
+                val isLast = r == layout.rows.lastIndex
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(42.dp)
+                        .onGloballyPositioned { rowBounds[r] = it.boundsInRoot() },
+                ) {
+                    val rowWidth = row.keys.sumOf { it.width.toDouble() }.toFloat() +
+                        if (isLast) 3f else 0f
+                    val side = (PREVIEW_LOGICAL_WIDTH - rowWidth) / 2f
+                    if (side > 0f) Spacer(Modifier.weight(side))
+                    if (isLast) GhostKey("⇧", 1.5f)
+                    if (row.keys.isEmpty()) {
+                        Box(
+                            Modifier.weight(4f).padding(2.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                "(empty row — use “+ key” or drop one here)",
+                                fontSize = 11.sp,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    row.keys.forEachIndexed { c, key ->
+                        PreviewKey(
+                            key = key,
+                            selected = r == selectedRow && c == selectedCol,
+                            dimmed = dragging == (r to c),
+                            modifier = Modifier
+                                .weight(key.width.coerceIn(0.5f, 4f))
+                                .onGloballyPositioned { keyBounds[r to c] = it.boundsInRoot() }
+                                .pointerInput(r, c) {
+                                    detectTapGestures(onTap = { onKeyTap(r, c) })
+                                }
+                                .pointerInput(r, c) {
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = { offset ->
+                                            dragging = r to c
+                                            dragPos = (keyBounds[r to c]?.topLeft ?: Offset.Zero) + offset
+                                        },
+                                        onDrag = { change, amount ->
+                                            change.consume()
+                                            dragPos += amount
+                                        },
+                                        onDragEnd = {
+                                            val from = dragging
+                                            val target = dropTarget()
+                                            dragging = null
+                                            // Skip no-op drops (a stationary
+                                            // long-press-release fires
+                                            // onDragEnd too).
+                                            if (from != null && target != null &&
+                                                target != from.first to from.second
+                                            ) {
+                                                currentOnMoveKey(from.first, from.second, target.first, target.second)
+                                            }
+                                        },
+                                        onDragCancel = { dragging = null },
+                                    )
+                                },
                         )
                     }
+                    if (isLast) GhostKey("⌫", 1.5f)
+                    if (side > 0f) Spacer(Modifier.weight(side))
                 }
-                row.keys.forEachIndexed { c, key ->
-                    PreviewKey(
-                        key = key,
-                        selected = r == selectedRow && c == selectedCol,
-                        modifier = Modifier.weight(key.width.coerceIn(0.5f, 4f)),
-                    ) { onKeyTap(r, c) }
-                }
-                if (isLast) GhostKey("⌫", 1.5f)
-                if (side > 0f) Spacer(Modifier.weight(side))
+            }
+            Row(Modifier.fillMaxWidth().height(42.dp)) {
+                GhostKey("?123", 1.5f)
+                GhostKey("🌐", 1f)
+                GhostKey("Ω", 1f)
+                GhostKey("", 4f)
+                GhostKey(".", 1f)
+                GhostKey("⏎", 1.5f)
             }
         }
-        Row(Modifier.fillMaxWidth().height(42.dp)) {
-            GhostKey("?123", 1.5f)
-            GhostKey("🌐", 1f)
-            GhostKey("Ω", 1f)
-            GhostKey("", 4f)
-            GhostKey(".", 1f)
-            GhostKey("⏎", 1.5f)
+
+        dragging?.let { (r, c) ->
+            val key = layout.rows.getOrNull(r)?.keys?.getOrNull(c)
+            if (key != null) {
+                val local = dragPos - previewOrigin
+                Box(
+                    Modifier
+                        .offset {
+                            IntOffset(
+                                (local.x - with(density) { 20.dp.toPx() }).roundToInt(),
+                                (local.y - with(density) { 21.dp.toPx() }).roundToInt(),
+                            )
+                        }
+                        .size(40.dp, 42.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(colors.primaryContainer)
+                        .alpha(0.9f),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Text(key.displayLabel, fontSize = 15.sp, color = colors.onPrimaryContainer, maxLines = 1)
+                }
+            }
         }
     }
 }
@@ -383,8 +574,8 @@ private fun LayoutPreview(
 private fun PreviewKey(
     key: CustomKey,
     selected: Boolean,
+    dimmed: Boolean,
     modifier: Modifier,
-    onTap: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     val markers = buildString {
@@ -402,7 +593,7 @@ private fun PreviewKey(
                 if (selected) Modifier.border(2.dp, colors.primary, RoundedCornerShape(6.dp))
                 else Modifier
             )
-            .clickable(onClick = onTap),
+            .alpha(if (dimmed) 0.35f else 1f),
         contentAlignment = Alignment.Center,
     ) {
         Text(

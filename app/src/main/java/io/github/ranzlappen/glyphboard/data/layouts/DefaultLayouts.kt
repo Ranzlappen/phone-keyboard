@@ -10,7 +10,7 @@ object DefaultLayouts {
     const val QWERTY_ID = "default-qwerty"
 
     /** Accent/variant sets matching common expectations (SwiftKey-style). */
-    private val accentVariants = mapOf(
+    internal val accentVariants = mapOf(
         'a' to "àáâäæãåā",
         'c' to "çćč",
         'd' to "đð",

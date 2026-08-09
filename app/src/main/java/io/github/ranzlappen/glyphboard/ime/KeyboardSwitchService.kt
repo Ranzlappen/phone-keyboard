@@ -2,6 +2,7 @@ package io.github.ranzlappen.glyphboard.ime
 
 import android.accessibilityservice.AccessibilityButtonController
 import android.accessibilityservice.AccessibilityService
+import android.accessibilityservice.AccessibilityService.SoftKeyboardController
 import android.content.Intent
 import android.os.Build
 import android.provider.Settings
@@ -68,10 +69,46 @@ class KeyboardSwitchService : AccessibilityService() {
         val glyphBoardIsCurrent = currentImeId != null && currentImeId.startsWith("$packageName/")
 
         when {
-            // Not enabled yet → the setup screen is the only useful target.
+            // Not enabled in system settings yet. Android 13+ lets an
+            // accessibility service enable an IME in its own package — the
+            // whole point of this button is working from anywhere.
             ourImeId == null -> {
-                toast("Enable GlyphBoard first — opening setup")
-                openApp(showPicker = false)
+                val installedId =
+                    imm.inputMethodList.firstOrNull { it.packageName == packageName }?.id
+                if (installedId != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                    // Failure is reported via the int status, not exceptions
+                    // (SecurityException only fires for other packages).
+                    val status = try {
+                        softKeyboardController.setInputMethodEnabled(installedId, true)
+                    } catch (e: RuntimeException) {
+                        SoftKeyboardController.ENABLE_IME_FAIL_UNKNOWN
+                    }
+                    if (status == SoftKeyboardController.ENABLE_IME_SUCCESS) {
+                        scope.launch {
+                            currentImeId?.let { settings.setLastOtherIme(it) }
+                            if (softKeyboardController.switchToInputMethod(installedId)) {
+                                toast("GlyphBoard enabled and active")
+                            } else {
+                                // showInputMethodPicker is ignored here (we
+                                // are neither focused nor the current IME) —
+                                // settings is the reachable fallback.
+                                toast("GlyphBoard enabled — select it in keyboard settings")
+                                openImeSettings()
+                            }
+                        }
+                    } else {
+                        val why = if (status == SoftKeyboardController.ENABLE_IME_FAIL_BY_ADMIN) {
+                            "blocked by device policy"
+                        } else {
+                            "not permitted"
+                        }
+                        toast("Couldn't enable GlyphBoard ($why) — opening keyboard settings")
+                        openImeSettings()
+                    }
+                } else {
+                    toast("Enable GlyphBoard in keyboard settings first")
+                    openImeSettings()
+                }
             }
 
             // Switch TO GlyphBoard, remembering where we came from so the
@@ -116,6 +153,14 @@ class KeyboardSwitchService : AccessibilityService() {
 
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun openImeSettings() {
+        startActivity(
+            Intent(Settings.ACTION_INPUT_METHOD_SETTINGS).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        )
     }
 
     private fun openApp(showPicker: Boolean) {
