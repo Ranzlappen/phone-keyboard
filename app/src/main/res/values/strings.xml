@@ -5,8 +5,10 @@
     <string name="ime_subtype_label">GlyphBoard</string>
     <string name="quick_switch_label">GlyphBoard quick switch</string>
     <string name="quick_switch_description">Adds a keyboard shortcut to the accessibility
-        button: one tap switches to GlyphBoard from anywhere; tapping again while GlyphBoard
-        is active opens the keyboard picker so you can hop back to your other keyboard.
-        This service reads nothing — it declares no accessibility events, no capabilities,
-        and cannot retrieve window content.</string>
+        button: one tap switches to GlyphBoard from anywhere (enabling it first if needed),
+        and tapping again hops straight back to your previous keyboard. After turning this
+        on, remember to assign the accessibility button/shortcut to GlyphBoard — otherwise
+        the button has nothing to trigger. This service reads nothing: it declares no
+        accessibility events, no capabilities, and cannot retrieve window content.</string>
+    <string name="quick_switch_tile_label">Switch keyboard</string>
 </resources>

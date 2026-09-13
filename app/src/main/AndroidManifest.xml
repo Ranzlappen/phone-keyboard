@@ -20,6 +20,17 @@
             </intent-filter>
         </activity>
 
+        <!-- Invisible trampoline: the only reliable way to raise the system
+             keyboard picker from a service or a tile (see QuickSwitchActivity). -->
+        <activity
+            android:name=".ui.QuickSwitchActivity"
+            android:exported="false"
+            android:theme="@style/Theme.GlyphBoard.Transparent"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask" />
+
         <service
             android:name=".ime.GlyphBoardService"
             android:exported="true"
@@ -47,6 +58,19 @@
             <meta-data
                 android:name="android.accessibilityservice"
                 android:resource="@xml/accessibility_switch" />
+        </service>
+        <!-- Quick Settings tile: swaps keyboards from anywhere without any
+             accessibility service. BIND_QUICK_SETTINGS_TILE is a permission the
+             SYSTEM must hold to bind us; it is not a permission this app requests. -->
+        <service
+            android:name=".ime.QuickSwitchTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_tile_keyboard"
+            android:label="@string/quick_switch_tile_label"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
         </service>
     </application>
 
