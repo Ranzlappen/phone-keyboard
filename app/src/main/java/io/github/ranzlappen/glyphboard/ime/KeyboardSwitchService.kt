@@ -10,7 +10,8 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import io.github.ranzlappen.glyphboard.GlyphBoardApp
-import io.github.ranzlappen.glyphboard.MainActivity
+import io.github.ranzlappen.glyphboard.data.prefs.SettingsRepository
+import io.github.ranzlappen.glyphboard.ui.QuickSwitchActivity
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -21,10 +22,19 @@ import kotlinx.coroutines.launch
 /**
  * Optional accessibility service that puts a keyboard toggle on the system
  * accessibility button (the floating ♿ affordance): one tap from anywhere
- * switches to GlyphBoard; tapping again while GlyphBoard is active switches
- * straight back to whatever keyboard was in use before (remembered across
- * taps), falling back to the system picker. Every failure path shows a toast
- * instead of failing silently.
+ * switches to GlyphBoard — enabling it first on Android 13+ if it was never
+ * enabled — and tapping again hops straight back to the keyboard you came
+ * from.
+ *
+ * Two hard platform limits shape this class:
+ *  * `switchToInputMethod` only exists from Android 11, and `setInputMethodEnabled`
+ *    from Android 13. Older releases can only be sent to the picker.
+ *  * `showInputMethodPicker()` is ignored when called from a service that is
+ *    neither the focused input client nor the current IME's uid — so every
+ *    picker fallback goes through [QuickSwitchActivity] instead.
+ *
+ * Invariant: a tap is never silent. It either visibly changes the keyboard or
+ * raises a toast/picker/settings screen explaining why it could not.
  *
  * Privacy: the service declares no event types, no capabilities, and
  * `canRetrieveWindowContent="false"` — it can not observe the screen or any
@@ -36,7 +46,7 @@ class KeyboardSwitchService : AccessibilityService() {
 
     private val buttonCallback = object : AccessibilityButtonController.AccessibilityButtonCallback() {
         override fun onClicked(controller: AccessibilityButtonController) {
-            toggleKeyboard()
+            runQuickSwitch()
         }
     }
 
@@ -59,116 +69,98 @@ class KeyboardSwitchService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) = Unit
     override fun onInterrupt() = Unit
 
-    private fun toggleKeyboard() {
-        val imm = getSystemService(InputMethodManager::class.java) ?: return
+    private fun runQuickSwitch() {
+        val imm = getSystemService(InputMethodManager::class.java)
+        if (imm == null) {
+            toast("Keyboard service unavailable")
+            return
+        }
         val settings = (application as GlyphBoardApp).settings
-        val enabledImes = imm.enabledInputMethodList
-        val ourImeId = enabledImes.firstOrNull { it.packageName == packageName }?.id
         val currentImeId =
             Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
-        val glyphBoardIsCurrent = currentImeId != null && currentImeId.startsWith("$packageName/")
 
-        when {
-            // Not enabled in system settings yet. Android 13+ lets an
-            // accessibility service enable an IME in its own package — the
-            // whole point of this button is working from anywhere.
-            ourImeId == null -> {
-                val installedId =
-                    imm.inputMethodList.firstOrNull { it.packageName == packageName }?.id
-                if (installedId != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    // Failure is reported via the int status, not exceptions
-                    // (SecurityException only fires for other packages).
-                    val status = try {
-                        softKeyboardController.setInputMethodEnabled(installedId, true)
-                    } catch (e: RuntimeException) {
-                        SoftKeyboardController.ENABLE_IME_FAIL_UNKNOWN
-                    }
-                    if (status == SoftKeyboardController.ENABLE_IME_SUCCESS) {
-                        scope.launch {
-                            currentImeId?.let { settings.setLastOtherIme(it) }
-                            if (softKeyboardController.switchToInputMethod(installedId)) {
-                                toast("GlyphBoard enabled and active")
-                            } else {
-                                // showInputMethodPicker is ignored here (we
-                                // are neither focused nor the current IME) —
-                                // settings is the reachable fallback.
-                                toast("GlyphBoard enabled — select it in keyboard settings")
-                                openImeSettings()
-                            }
+        scope.launch {
+            val action = ImeSwitchPlanner.plan(
+                ourPackage = packageName,
+                installedIds = imm.inputMethodList.map { it.id },
+                enabledIds = imm.enabledInputMethodList.map { it.id },
+                currentImeId = currentImeId,
+                previousImeId = settings.lastOtherIme.first(),
+                canSwitchDirectly = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R,
+                canEnableIme = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU,
+            )
+            execute(action, currentImeId, settings)
+        }
+    }
+
+    private suspend fun execute(
+        action: QuickSwitchAction,
+        currentImeId: String?,
+        settings: SettingsRepository,
+    ) {
+        when (action) {
+            is QuickSwitchAction.SwitchTo -> {
+                // Remember where we came from so the next tap can hop back.
+                if (action.toGlyphBoard && currentImeId != null) {
+                    settings.setLastOtherIme(currentImeId)
+                }
+                if (!switchTo(action.imeId)) {
+                    toast("Couldn't switch keyboards — opening the picker")
+                    trampoline(QuickSwitchActivity.MODE_PICKER)
+                }
+            }
+
+            is QuickSwitchAction.EnableThenSwitch -> {
+                when (val status = enableOurIme(action.imeId)) {
+                    SoftKeyboardController.ENABLE_IME_SUCCESS -> {
+                        if (currentImeId != null) settings.setLastOtherIme(currentImeId)
+                        if (switchTo(action.imeId)) {
+                            toast("GlyphBoard enabled and active")
+                        } else {
+                            toast("GlyphBoard enabled — pick it here")
+                            trampoline(QuickSwitchActivity.MODE_PICKER)
                         }
-                    } else {
+                    }
+                    else -> {
                         val why = if (status == SoftKeyboardController.ENABLE_IME_FAIL_BY_ADMIN) {
                             "blocked by device policy"
                         } else {
-                            "not permitted"
+                            "needs your confirmation"
                         }
-                        toast("Couldn't enable GlyphBoard ($why) — opening keyboard settings")
-                        openImeSettings()
+                        toast("Enabling GlyphBoard $why — do it here")
+                        trampoline(QuickSwitchActivity.MODE_IME_SETTINGS)
                     }
-                } else {
-                    toast("Enable GlyphBoard in keyboard settings first")
-                    openImeSettings()
                 }
             }
 
-            // Switch TO GlyphBoard, remembering where we came from so the
-            // next tap can hop straight back.
-            !glyphBoardIsCurrent -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    scope.launch {
-                        currentImeId?.let { settings.setLastOtherIme(it) }
-                        if (!softKeyboardController.switchToInputMethod(ourImeId)) {
-                            toast("Couldn't switch — opening keyboard picker")
-                            imm.showInputMethodPicker()
-                        }
-                    }
-                } else {
-                    // Pre-R can't switch directly; a foreground activity may
-                    // legitimately show the picker.
-                    openApp(showPicker = true)
-                }
-            }
+            QuickSwitchAction.ShowPicker -> trampoline(QuickSwitchActivity.MODE_PICKER)
 
-            // Switch BACK from GlyphBoard: straight to the remembered
-            // keyboard; picker only when there is nothing to go back to.
-            else -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    scope.launch {
-                        val previous = settings.lastOtherIme.first()
-                            ?.takeIf { prev -> enabledImes.any { it.id == prev } }
-                        val switched = previous != null &&
-                            softKeyboardController.switchToInputMethod(previous)
-                        if (!switched) {
-                            // Allowed from this process: it shares the uid
-                            // with the current IME.
-                            imm.showInputMethodPicker()
-                        }
-                    }
-                } else {
-                    imm.showInputMethodPicker()
-                }
+            QuickSwitchAction.OpenImeSettings -> {
+                toast("Turn GlyphBoard on here first")
+                trampoline(QuickSwitchActivity.MODE_IME_SETTINGS)
             }
         }
     }
 
+    private fun switchTo(imeId: String): Boolean =
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+            runCatching { softKeyboardController.switchToInputMethod(imeId) }.getOrDefault(false)
+
+    /** Returns an `ENABLE_IME_*` status; failure is reported by value, not by throwing. */
+    private fun enableOurIme(imeId: String): Int {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
+            return SoftKeyboardController.ENABLE_IME_FAIL_UNKNOWN
+        }
+        return runCatching { softKeyboardController.setInputMethodEnabled(imeId, true) }
+            .getOrDefault(SoftKeyboardController.ENABLE_IME_FAIL_UNKNOWN)
+    }
+
+    private fun trampoline(mode: String) {
+        val started = runCatching { startActivity(QuickSwitchActivity.intent(this, mode)) }.isSuccess
+        if (!started) toast("Open GlyphBoard to switch keyboards")
+    }
+
     private fun toast(message: String) {
         Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
-    }
-
-    private fun openImeSettings() {
-        startActivity(
-            Intent(Settings.ACTION_INPUT_METHOD_SETTINGS).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-        )
-    }
-
-    private fun openApp(showPicker: Boolean) {
-        startActivity(
-            Intent(this, MainActivity::class.java).apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                putExtra(MainActivity.EXTRA_SHOW_PICKER, showPicker)
-            }
-        )
     }
 }

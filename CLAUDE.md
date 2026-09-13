@@ -74,6 +74,26 @@ see Key Conventions). Two entry points share one process and one DataStore:
 * **`ime/KeyboardSwitchService`** — optional accessibility service bound to
   the system accessibility button for global keyboard switching. It must
   keep declaring **zero data access** (no event types, no window content).
+  Its decision tree lives in the pure, unit-tested `ime/ImeSwitchPlanner.kt`
+  (`QuickSwitchAction`: switch / enable-then-switch / picker / IME settings);
+  the service only executes the plan. Invariant: **a tap is never silent** —
+  it either visibly changes the keyboard or raises a toast/picker/settings
+  screen.
+* **`ui/QuickSwitchActivity`** — invisible one-shot trampoline. Required
+  because `showInputMethodPicker()` is **ignored unless the caller is the
+  focused input client** (or shares a uid with the *current* IME): calls
+  straight from the accessibility service or the tile are dropped with no
+  error. Never call `showInputMethodPicker()` from a service — route it
+  through this activity, which waits for window focus before calling.
+* **`ime/QuickSwitchTileService`** — Quick Settings tile route to the picker,
+  needing no accessibility service at all. `BIND_QUICK_SETTINGS_TILE` is a
+  `<service android:permission>` the *system* must hold, not a
+  `<uses-permission>` — the zero-permission rule still holds.
+* **`ime/ShortcutTargets`** (in `ImeSwitchPlanner.kt`) — parses
+  `accessibility_button_targets` / `accessibility_shortcut_target_service`.
+  **Enabling the a11y service does not assign the button to it**; until the
+  user does that, `onClicked` never fires, so the setup screen checks and
+  reports both states separately.
 * **`util/CodePoints.kt`, `util/Zalgo.kt`** — pure-JVM helpers.
 * **`MainActivity.kt` + `ui/app/`** — setup flow (enable/select IME and the
   quick-switch service, with live status), test text field, settings, the

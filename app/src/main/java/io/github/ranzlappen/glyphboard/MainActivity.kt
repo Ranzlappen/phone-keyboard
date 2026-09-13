@@ -54,15 +54,13 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.lifecycle.lifecycleScope
-import androidx.lifecycle.withStateAtLeast
 import io.github.ranzlappen.glyphboard.data.layouts.DefaultLayouts
 import io.github.ranzlappen.glyphboard.data.layouts.LayoutConfig
+import io.github.ranzlappen.glyphboard.ime.ShortcutTargets
 import io.github.ranzlappen.glyphboard.ui.app.LayoutEditorScreen
 import io.github.ranzlappen.glyphboard.ui.app.LayoutsListScreen
 import io.github.ranzlappen.glyphboard.ui.app.SimilarityScreen
 import io.github.ranzlappen.glyphboard.ui.theme.GlyphBoardTheme
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
@@ -71,11 +69,6 @@ import kotlinx.coroutines.launch
  */
 class MainActivity : ComponentActivity() {
 
-    companion object {
-        /** Set by [io.github.ranzlappen.glyphboard.ime.KeyboardSwitchService] on pre-R devices. */
-        const val EXTRA_SHOW_PICKER = "io.github.ranzlappen.glyphboard.SHOW_PICKER"
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -83,28 +76,6 @@ class MainActivity : ComponentActivity() {
             GlyphBoardTheme {
                 AppRoot()
             }
-        }
-        maybeShowPicker(intent)
-    }
-
-    override fun onNewIntent(intent: Intent) {
-        super.onNewIntent(intent)
-        maybeShowPicker(intent)
-    }
-
-    private fun maybeShowPicker(intent: Intent?) {
-        if (intent?.getBooleanExtra(EXTRA_SHOW_PICKER, false) != true) return
-        intent.removeExtra(EXTRA_SHOW_PICKER)
-        lifecycleScope.launch {
-            // The picker is ignored for unfocused apps: RESUMED alone is not
-            // enough (focus lands a few frames later), so wait for it too.
-            lifecycle.withStateAtLeast(Lifecycle.State.RESUMED) {}
-            var waited = 0L
-            while (!window.decorView.hasWindowFocus() && waited < 2000L) {
-                delay(50L)
-                waited += 50L
-            }
-            getSystemService(InputMethodManager::class.java)?.showInputMethodPicker()
         }
     }
 }
@@ -246,6 +217,19 @@ private fun HomeScreen(
             "enabled_accessibility_services",
         )?.split(':')?.any { it.startsWith("${context.packageName}/") } == true
     }
+    // Enabling the service is NOT enough: the accessibility button/shortcut
+    // has to be pointed at it as a separate step, and until it is, tapping
+    // the button does literally nothing (no callback is ever delivered).
+    val quickSwitchAssigned = remember(refresh) {
+        val resolver = context.contentResolver
+        listOf("accessibility_button_targets", "accessibility_shortcut_target_service").any {
+            ShortcutTargets.isAssigned(
+                Settings.Secure.getString(resolver, it),
+                context.packageName,
+                "KeyboardSwitchService",
+            )
+        }
+    }
 
     val haptics by app.settings.hapticsEnabled.collectAsState(initial = true)
     val hideUnsupported by app.settings.hideUnsupported.collectAsState(initial = true)
@@ -304,12 +288,32 @@ private fun HomeScreen(
 
         Card {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Quick switch button", fontWeight = FontWeight.SemiBold)
+                Text("Switch keyboards from anywhere", fontWeight = FontWeight.SemiBold)
                 Text(
-                    "Optional: enable the GlyphBoard quick-switch accessibility service " +
-                        "to get a floating button that swaps keyboards from anywhere — one " +
-                        "tap to GlyphBoard, tap again to hop back to your previous " +
-                        "keyboard. The service cannot read the screen or your input.",
+                    "Two optional shortcuts, so you never have to dig through " +
+                        "system settings to swap keyboards. Neither can read your " +
+                        "screen or your typing.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                Text("Quick Settings tile", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text(
+                    "Works on every device, nothing to enable: pull down the " +
+                        "notification shade, tap the edit (✏️) button, and drag " +
+                        "“Switch keyboard” into your tiles. Tapping it opens the " +
+                        "keyboard picker from inside any app.",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                HorizontalDivider()
+
+                Text("Accessibility button", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                Text(
+                    "One tap switches straight to GlyphBoard (and back again) — no " +
+                        "picker in between. All three steps are required; the button " +
+                        "does nothing until step 3 is done.",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -330,14 +334,28 @@ private fun HomeScreen(
                 SetupStep(
                     done = quickSwitchEnabled,
                     label = if (quickSwitchEnabled) {
-                        "2. Quick switch is on"
+                        "2. Service is on"
                     } else {
-                        "2. Enable “GlyphBoard quick switch” under installed services / " +
-                            "downloaded apps, and turn on its shortcut button"
+                        "2. Turn on “GlyphBoard quick switch” under installed services / " +
+                            "downloaded apps"
                     },
                     buttonText = "Open accessibility settings",
                 ) {
                     context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                }
+                SetupStep(
+                    done = quickSwitchAssigned,
+                    label = if (quickSwitchAssigned) {
+                        "3. Shortcut assigned — the button is live"
+                    } else {
+                        "3. Point the accessibility shortcut at GlyphBoard: open its " +
+                            "entry and turn on the shortcut (floating button, nav-bar " +
+                            "button, or volume-key hold). Without this the button has " +
+                            "nothing to trigger."
+                    },
+                    buttonText = "Open GlyphBoard's shortcut settings",
+                ) {
+                    openAccessibilityDetails(context)
                 }
             }
         }
@@ -379,6 +397,24 @@ private fun HomeScreen(
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/**
+ * Opens this service's accessibility detail page (where the shortcut toggle
+ * lives) on Android 12+, falling back to the accessibility list. Without the
+ * shortcut assigned, the accessibility button never calls us at all.
+ */
+private fun openAccessibilityDetails(context: android.content.Context) {
+    val component = android.content.ComponentName(
+        context,
+        io.github.ranzlappen.glyphboard.ime.KeyboardSwitchService::class.java,
+    ).flattenToString()
+    val detail = Intent("android.settings.ACCESSIBILITY_DETAILS_SETTINGS")
+        .putExtra("android.intent.extra.COMPONENT_NAME", component)
+    val opened = runCatching { context.startActivity(detail) }.isSuccess
+    if (!opened) {
+        context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
     }
 }
 

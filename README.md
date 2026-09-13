@@ -67,13 +67,17 @@ or combining diacritic.
   type gets zalgo-fied until you set it back to zero.
 - **Pinning**: pin single characters (long-press → Pin) into a section above
   Recents, or entire blocks (long-press a block name) right below it.
-- **Quick switch button**: optional accessibility service that puts keyboard
-  switching on the system accessibility button — one tap switches to
-  GlyphBoard from anywhere (on Android 13+ it even *enables* GlyphBoard
-  first if needed), tap again to hop straight back to the keyboard you came
-  from. Declares zero data access: no events, no window content, nothing to
-  read. (Android 13+ sideloads: allow restricted settings via App info → ⋮
-  first — the app links you there.)
+- **Switch keyboards from anywhere**, two optional routes:
+  - **Quick Settings tile** — drag "Switch keyboard" into your shade once;
+    tapping it opens the keyboard picker from inside any app. No permissions,
+    no accessibility service, nothing that can fail to be wired up.
+  - **Accessibility button** — one tap switches straight to GlyphBoard (on
+    Android 13+ it even *enables* GlyphBoard first if needed), tap again to
+    hop back to the keyboard you came from. Declares zero data access: no
+    events, no window content, nothing to read. Needs three setup steps, and
+    the app shows which one is still missing — notably **assigning the
+    accessibility shortcut to GlyphBoard**, without which the button has
+    nothing to trigger.
 - **Private by design**: no INTERNET permission, no permissions at all, no
   autocorrect, no logging. What you type never leaves the input field.
 - **Material 3** with dynamic color (Android 12+) and dark mode.
