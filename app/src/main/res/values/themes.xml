@@ -4,4 +4,12 @@
     <style name="Theme.GlyphBoard" parent="Theme.AppCompat.DayNight.NoActionBar">
         <item name="android:windowLightStatusBar">true</item>
     </style>
+
+    <!-- QuickSwitchActivity: an invisible, animation-free window that exists
+         only long enough to be the focused client the keyboard picker
+         requires. Deliberately NOT an AppCompat theme — it hosts no views. -->
+    <style name="Theme.GlyphBoard.Transparent" parent="@android:style/Theme.Translucent.NoTitleBar">
+        <item name="android:windowAnimationStyle">@null</item>
+        <item name="android:backgroundDimEnabled">false</item>
+    </style>
 </resources>
