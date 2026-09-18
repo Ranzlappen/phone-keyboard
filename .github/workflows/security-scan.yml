@@ -72,7 +72,13 @@ jobs:
           queries: security-extended
 
       - name: Build for analysis
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        # --no-build-cache is required here: this repo's own ci-android.yml
+        # populates Gradle's build cache for the same commit, so without
+        # this flag compileDebugKotlin comes back FROM-CACHE and kotlinc
+        # never actually runs under CodeQL's tracer. build-mode: manual
+        # needs the real compiler invocation to see any source at all
+        # (fails with "didn't build any of it" otherwise).
+        run: ./gradlew assembleDebug --no-daemon --stacktrace --no-build-cache
 
       - name: Analyze
         uses: github/codeql-action/analyze@v3
