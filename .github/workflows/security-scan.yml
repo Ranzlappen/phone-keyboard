@@ -113,7 +113,12 @@ jobs:
           persist-credentials: false
 
       - name: Run analysis
-        uses: ossf/scorecard-action@v2
+        # Pinned to a commit SHA, not a floating major tag: unlike every
+        # other action in this file, ossf/scorecard-action has never
+        # published a `v2` tag (only fully-qualified v2.x.y releases), so
+        # `@v2` fails to resolve outright. Bump the SHA/comment together
+        # when a newer v2.x.y (or v3) release is picked.
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc  # v2.4.4
         with:
           results_file: results.sarif
           results_format: sarif
