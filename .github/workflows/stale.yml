@@ -31,7 +31,7 @@ jobs:
     if: ${{ vars.STALE_ENABLED == 'true' }}
     steps:
       - name: Apply stale policy
-        uses: actions/stale@v9
+        uses: actions/stale@v11
         with:
           days-before-issue-stale: 60
           days-before-issue-close: 7
